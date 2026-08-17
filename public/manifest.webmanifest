@@ -1,0 +1,17 @@
+{
+  "name": "KRUH ŽIVLJENJA",
+  "short_name": "Kruh življenja",
+  "description": "Načrtovanje prevzemov in razdeljevanja hrane / Food pickup and distribution planner",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fdf8f0",
+  "theme_color": "#a06f3a",
+  "lang": "sl",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
