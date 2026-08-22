@@ -7,7 +7,7 @@ const dict = {
   appName: { sl: "KRUH ŽIVLJENJA", en: "KRUH ŽIVLJENJA" },
   tagline: { 
     sl: "\"Zastonj ste prejeli, zastonj dajte\" (Mat 10,8) \n\"Jezus jim je rekel: 'Jaz sem kruh življenja. Kdor pride k meni, ne bo lačen, in kdor vame veruje, ne bo nikoli žejen'\" (Jn 6,35)", 
-    en: "\"Freely you have received; freely give\" (Mat 10:8) \n\"Then Jesus declared, 'I am the bread of life. Whoever comes to me will never go hungry, and whoever believes in me will never be thirsty'\" (John 6.35)" 
+    en: "\"Freely you have received; freely give\" (Mat 10:8 NIV) \n\"Then Jesus declared, 'I am the bread of life. Whoever comes to me will never go hungry, and whoever believes in me will never be thirsty'\" (John 6.35)" 
   },
   installApp: { sl: "Namesti aplikacijo", en: "Install app" },
 
