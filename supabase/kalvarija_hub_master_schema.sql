@@ -298,9 +298,119 @@ create table if not exists public.nedelje_service_songs (
   unique (service_id, song_id)
 );
 
+create table if not exists public.nedelje_assignments (
+  id uuid primary key default gen_random_uuid(),
+  sunday_id text not null,
+  ministry_id text not null,
+  person_name text not null,
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'declined', 'swapped')),
+  notes text,
+  decline_reason text,
+  assigned_by_id text,
+  assigned_by_name text,
+  confirmation_token text,
+  assigned_at timestamptz not null default now(),
+  response_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.nedelje_blackout_dates (
+  id uuid primary key default gen_random_uuid(),
+  person_name text not null,
+  person_id text,
+  start_date text not null,
+  end_date text not null,
+  reason text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.nedelje_shift_swaps (
+  id uuid primary key default gen_random_uuid(),
+  sunday_id text not null,
+  sunday_date text not null,
+  ministry_id text not null,
+  ministry_name text not null,
+  requester_name text not null,
+  reason text,
+  status text not null default 'open' check (status in ('open', 'accepted', 'cancelled')),
+  accepted_by_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.nedelje_worship_schedules (
+  id text primary key,
+  date text not null,
+  worship_leader text,
+  leader text,
+  acoustic text,
+  drums text,
+  bass text,
+  keys text,
+  vocals text,
+  sound text,
+  slides text,
+  vocal_tech_absent text,
+  monitors text,
+  sunday_school text,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.nedelje_school_lessons (
+  id text primary key,
+  sunday_id text,
+  sunday_date text,
+  group_name text,
+  topic_sl text,
+  topic_en text,
+  bible_story_sl text,
+  memory_verse_sl text,
+  craft_and_games_sl text,
+  materials_needed jsonb default '[]'::jsonb,
+  google_doc_url text,
+  teachers jsonb default '[]'::jsonb,
+  helpers jsonb default '[]'::jsonb,
+  notes text,
+  status text not null default 'planned',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.nedelje_visitors (
+  id text primary key,
+  sunday_id text,
+  sunday_date text,
+  visitor_name text not null,
+  contact_info text,
+  invited_by text,
+  notes text,
+  interests jsonb default '[]'::jsonb,
+  assigned_follow_up_person text,
+  follow_up_status text not null default 'new',
+  coffee_shop_notes text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.nedelje_inspections (
+  id uuid primary key default gen_random_uuid(),
+  sunday_id text,
+  inspector_name text not null,
+  checklist jsonb not null default '{}'::jsonb,
+  passed boolean not null default true,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
 alter table public.nedelje_ministries enable row level security;
 alter table public.nedelje_services enable row level security;
 alter table public.nedelje_roster_slots enable row level security;
+alter table public.nedelje_assignments enable row level security;
+alter table public.nedelje_blackout_dates enable row level security;
+alter table public.nedelje_shift_swaps enable row level security;
+alter table public.nedelje_worship_schedules enable row level security;
+alter table public.nedelje_school_lessons enable row level security;
+alter table public.nedelje_visitors enable row level security;
+alter table public.nedelje_inspections enable row level security;
 alter table public.nedelje_songs enable row level security;
 alter table public.nedelje_service_songs enable row level security;
 
@@ -308,6 +418,20 @@ create policy "Ministries viewable by authenticated users" on public.nedelje_min
 create policy "Ministries manageable by leaders" on public.nedelje_ministries for all to authenticated using (public.has_app_role(auth.uid(), 'nedelje', 'leader') or public.is_admin(auth.uid()));
 create policy "Services viewable by authenticated users" on public.nedelje_services for select to authenticated using (true);
 create policy "Rosters viewable by authenticated users" on public.nedelje_roster_slots for select to authenticated using (true);
+create policy "Assignments viewable by authenticated users" on public.nedelje_assignments for select to authenticated using (true);
+create policy "Assignments manageable by users" on public.nedelje_assignments for all to authenticated using (true);
+create policy "Blackouts viewable by authenticated users" on public.nedelje_blackout_dates for select to authenticated using (true);
+create policy "Blackouts manageable by users" on public.nedelje_blackout_dates for all to authenticated using (true);
+create policy "Swaps viewable by authenticated users" on public.nedelje_shift_swaps for select to authenticated using (true);
+create policy "Swaps manageable by users" on public.nedelje_shift_swaps for all to authenticated using (true);
+create policy "Worship schedules viewable by authenticated" on public.nedelje_worship_schedules for select to authenticated using (true);
+create policy "Worship schedules manageable by users" on public.nedelje_worship_schedules for all to authenticated using (true);
+create policy "Lessons viewable by authenticated" on public.nedelje_school_lessons for select to authenticated using (true);
+create policy "Lessons manageable by users" on public.nedelje_school_lessons for all to authenticated using (true);
+create policy "Visitors viewable by authenticated" on public.nedelje_visitors for select to authenticated using (true);
+create policy "Visitors manageable by users" on public.nedelje_visitors for all to authenticated using (true);
+create policy "Inspections viewable by authenticated" on public.nedelje_inspections for select to authenticated using (true);
+create policy "Inspections manageable by users" on public.nedelje_inspections for all to authenticated using (true);
 create policy "Songs viewable by authenticated users" on public.nedelje_songs for select to authenticated using (true);
 create policy "Service songs viewable by authenticated users" on public.nedelje_service_songs for select to authenticated using (true);
 create policy "Nedelje manageable by leaders" on public.nedelje_services for all to authenticated using (public.has_app_role(auth.uid(), 'nedelje', 'leader') or public.is_admin(auth.uid()));

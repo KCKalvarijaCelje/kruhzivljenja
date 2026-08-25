@@ -13,6 +13,7 @@ import { formatAppDateTime } from "@/lib/tz";
 import logoUrl from "@/assets/logo.png";
 import { RenderedMessage } from "@/lib/stop-message-format";
 import { AppShell } from "@/components/app-shell";
+import { LocationLogo } from "@/components/location-logo";
 
 export const Route = createFileRoute("/dashboard")({
   component: PublicDashboard,
@@ -274,12 +275,12 @@ function PublicDashboard() {
 function StopBlock({ stop, prominent = false }: { stop: { id: string; location: string | null; driver: string | null; coordinator: string | null }; prominent?: boolean }) {
   const { t } = useI18n();
   return (
-    <div className={`rounded-lg p-4 ${prominent ? "bg-background ring-1 ring-border" : "bg-background ring-1 ring-border"}`}>
-      <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
-        {t("location")}
-      </div>
-      <div className="text-base font-semibold mb-3">
-        {stop.location ?? <span className="text-muted-foreground font-normal italic">—</span>}
+    <div className={`rounded-xl p-4 bg-white border border-slate-200/90 shadow-2xs space-y-3`}>
+      <div className="flex items-center gap-2.5">
+        <LocationLogo name={stop.location} size="md" />
+        <span className="text-base font-bold text-slate-900">
+          {stop.location ?? <span className="text-muted-foreground font-normal italic">—</span>}
+        </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <Field label={t("driver")} value={stop.driver} />
@@ -389,8 +390,11 @@ function DateRow({
       ) : (
         <ul className="space-y-2">
           {row.stops.map((s) => (
-            <li key={s.id} className="text-sm pl-3 border-l-2 border-border space-y-0.5">
-              <div className="font-semibold">{s.location ?? "—"}</div>
+            <li key={s.id} className="text-sm pl-3 border-l-2 border-slate-200 space-y-1">
+              <div className="font-semibold flex items-center gap-2 text-slate-900">
+                <LocationLogo name={s.location} size="sm" />
+                <span>{s.location ?? "—"}</span>
+              </div>
               <div className="text-xs text-muted-foreground">
                 <span className="uppercase tracking-wider">{t("driver")}:</span>{" "}
                 <span className={s.driver ? "text-foreground font-medium normal-case tracking-normal" : "not-italic font-bold normal-case tracking-normal text-destructive"}>{s.driver ?? t("unassigned")}</span>

@@ -5,8 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Fraunces", "Georgia", serif;
+  --font-sans: 'Nohemi', 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Nohemi', 'Plus Jakarta Sans', sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -47,87 +47,51 @@
 
 :root {
   --radius: 0.75rem;
-  /* Brand palette derived from KRUH ŽIVLJENJA logo: warm bronze/brown on cream */
-  --brand: oklch(0.58 0.09 60);          /* logo bronze ~ #a06f3a */
-  --brand-deep: oklch(0.42 0.07 55);     /* deeper roast brown for hovers/text */
-  --brand-soft: oklch(0.92 0.035 75);    /* tan tint for surfaces */
-  --background: oklch(0.985 0.012 75);
-  --foreground: oklch(0.24 0.03 50);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.24 0.03 50);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.24 0.03 50);
-  --primary: var(--brand);
-  --primary-foreground: oklch(0.99 0.01 75);
-  --secondary: oklch(0.94 0.025 75);
-  --secondary-foreground: oklch(0.3 0.04 50);
-  --muted: oklch(0.95 0.015 75);
-  --muted-foreground: oklch(0.5 0.025 55);
-  --accent: var(--brand-soft);
-  --accent-foreground: var(--brand-deep);
-  --destructive: oklch(0.58 0.22 27);
-  --destructive-foreground: oklch(0.99 0 0);
-  --success: oklch(0.62 0.13 150);
-  --success-foreground: oklch(0.99 0 0);
-  --warning: oklch(0.78 0.14 75);
-  --warning-foreground: oklch(0.25 0.04 50);
-  --border: oklch(0.9 0.02 65);
-  --input: oklch(0.9 0.02 65);
-  --ring: var(--brand);
-  /* Sidebar — solid warm cream with bronze active state */
-  --sidebar: oklch(0.96 0.02 75);
-  --sidebar-foreground: oklch(0.24 0.03 50);
-  --sidebar-primary: var(--brand);
-  --sidebar-primary-foreground: oklch(0.99 0.01 75);
-  --sidebar-accent: var(--brand-soft);
-  --sidebar-accent-foreground: var(--brand-deep);
-  --sidebar-border: oklch(0.88 0.025 65);
-  --sidebar-ring: var(--brand);
+  /* Brand palette derived from Brand Book April 2025 */
+  --brand: #93032E;          /* brand wine */
+  --brand-deep: #034C3C;     /* brand pine green */
+  --brand-soft: #FAF9F6;    /* card soft white */
+  --background: #FAF7F5;     /* 20% Krema warm off-white tint */
+  --foreground: #1a1a1a;
+  --card: #ffffff;
+  --card-foreground: #1a1a1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a1a;
+  --primary: #93032E;
+  --primary-foreground: #ffffff;
+  --secondary: #FAF7F5;
+  --secondary-foreground: #1a1a1a;
+  --muted: #F0EAE6;
+  --muted-foreground: #6a6a58;
+  --accent: #034C3C;
+  --accent-foreground: #ffffff;
+  --destructive: #93032E;
+  --destructive-foreground: #ffffff;
+  --success: #034C3C;
+  --success-foreground: #ffffff;
+  --warning: #A6A15E;
+  --warning-foreground: #1a1a1a;
+  --border: rgba(166, 161, 94, 0.2);
+  --input: rgba(166, 161, 94, 0.25);
+  --ring: #93032E;
+  /* Sidebar — solid pure white with subtle border and wine active state */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #93032E;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #FAF7F5;
+  --sidebar-accent-foreground: #93032E;
+  --sidebar-border: rgba(166, 161, 94, 0.2);
+  --sidebar-ring: #93032E;
 }
 
-.dark {
-  --brand: oklch(0.72 0.11 65);
-  --brand-deep: oklch(0.55 0.09 60);
-  --brand-soft: oklch(0.32 0.04 55);
-  --background: oklch(0.2 0.02 50);
-  --foreground: oklch(0.97 0.01 75);
-  --card: oklch(0.24 0.03 50);
-  --card-foreground: oklch(0.97 0.01 75);
-  --popover: oklch(0.24 0.03 50);
-  --popover-foreground: oklch(0.97 0.01 75);
-  --primary: var(--brand);
-  --primary-foreground: oklch(0.18 0.02 50);
-  --secondary: oklch(0.28 0.03 50);
-  --secondary-foreground: oklch(0.97 0.01 75);
-  --muted: oklch(0.28 0.03 50);
-  --muted-foreground: oklch(0.72 0.02 60);
-  --accent: var(--brand-soft);
-  --accent-foreground: oklch(0.97 0.01 75);
-  --destructive: oklch(0.65 0.2 27);
-  --destructive-foreground: oklch(0.99 0 0);
-  --success: oklch(0.65 0.13 150);
-  --success-foreground: oklch(0.99 0 0);
-  --warning: oklch(0.78 0.14 75);
-  --warning-foreground: oklch(0.2 0.04 50);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: var(--brand);
-  --sidebar: oklch(0.24 0.03 50);
-  --sidebar-foreground: oklch(0.97 0.01 75);
-  --sidebar-primary: var(--brand);
-  --sidebar-primary-foreground: oklch(0.18 0.02 50);
-  --sidebar-accent: oklch(0.3 0.04 55);
-  --sidebar-accent-foreground: oklch(0.97 0.01 75);
-  --sidebar-border: oklch(1 0 0 / 12%);
-  --sidebar-ring: var(--brand);
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
 }
 
-@layer base {
-  * { border-color: var(--color-border); }
-  body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
-    font-family: var(--font-sans);
-  }
-  h1, h2, h3 { font-family: var(--font-display); letter-spacing: -0.02em; }
+h1, h2, h3, h4 {
+  font-family: 'Nohemi', 'Plus Jakarta Sans', sans-serif;
+  letter-spacing: -0.02em;
 }

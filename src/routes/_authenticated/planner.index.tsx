@@ -13,9 +13,15 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ChevronLeft, ChevronRight, MapPin, Plus, CheckCircle2, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Plus, CheckCircle2, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { StopMessages } from "@/components/stop-messages";
+import { LocationLogo } from "@/components/location-logo";
+import {
+  serverGetPlannerData,
+  serverUpdateScheduleStopAssignment,
+  serverToggleStopCompletion,
+} from "@/lib/planner.functions";
 
 export const Route = createFileRoute("/_authenticated/planner/")({
   component: Planner,
@@ -70,20 +76,31 @@ function Planner() {
   const [selfAssign, setSelfAssign] = useState<{ stopId: string; field: "driver" | "coordinator" } | null>(null);
   const [selfAssignSaving, setSelfAssignSaving] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from("ministry_years").select("*").order("start_year", { ascending: false });
-      const yrs = (data ?? []) as any;
-      setYears(yrs);
-      if (yrs.length) {
-        const cur = currentMinistryStartYear();
-        const match = yrs.find((y: any) => y.start_year === cur) ?? yrs[0];
-        setSelectedYearId(match.id);
-      } else {
-        setLoading(false);
+  const loadPlanner = async (targetYearId?: string | null) => {
+    setLoading(true);
+    try {
+      const res = await serverGetPlannerData({ data: { yearId: targetYearId ?? selectedYearId } });
+      if (res.success) {
+        setYears(res.years ?? []);
+        const chosenYearId = targetYearId || selectedYearId || res.selectedYear?.id || null;
+        if (chosenYearId && chosenYearId !== selectedYearId) {
+          setSelectedYearId(chosenYearId);
+        }
+        setRows((res.dates ?? []) as any);
+        setLocations(res.locations ?? []);
+        setPeople(res.people ?? []);
+        setHouseholds(res.households ?? []);
       }
-    })();
-  }, []);
+    } catch (err) {
+      console.error("loadPlanner error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPlanner(selectedYearId);
+  }, [selectedYearId]);
 
   useEffect(() => {
     if (!user) {
@@ -127,42 +144,13 @@ function Planner() {
     };
   }, [user]);
 
-  // Load lookups for the admin-only one-off entry dialog
   useEffect(() => {
-    if (!isAdmin) return;
-    (async () => {
-      const [{ data: locs }, { data: ppl }, { data: hh }] = await Promise.all([
-        supabase.from("locations").select("id,name").eq("active", true).order("name"),
-        supabase.from("people").select("id,full_name").eq("active", true).order("full_name"),
-        supabase.from("recipient_households").select("id,name").eq("active", true).order("name"),
-      ]);
-      setLocations((locs ?? []) as any);
-      setPeople((ppl ?? []) as any);
-      setHouseholds((hh ?? []) as any);
-    })();
-  }, [isAdmin]);
-
-  const loadRows = async (yearId: string) => {
-    setLoading(true);
-    const { data } = await supabase
-      .from("schedule_dates")
-      .select("id,date,status,notes,schedule_stops(id,sort_order,driver_id,coordinator_id,completed_at,completed_by,locations(name),driver:people!schedule_stops_driver_id_fkey(full_name),coordinator:people!schedule_stops_coordinator_id_fkey(full_name),completer:people!schedule_stops_completed_by_fkey(full_name)),date_recipients(id)")
-      .eq("ministry_year_id", yearId)
-      .order("date", { ascending: true });
-    setRows((data ?? []) as any);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    if (!selectedYearId) return;
-    loadRows(selectedYearId);
     const today = new Date();
-    const sy = years.find((y) => y.id === selectedYearId)?.start_year;
-    if (sy != null) {
-      const months = ministryMonths(sy);
-      const idx = months.findIndex((m) => m.year === today.getFullYear() && m.month === today.getMonth());
-      if (idx >= 0) setActiveMonthIdx(idx);
-    }
+    const sy = years.find((y) => y.id === selectedYearId)?.start_year ?? 2026;
+    const months = ministryMonths(sy);
+    const idx = months.findIndex((m) => m.year === today.getFullYear() && m.month === today.getMonth());
+    if (idx >= 0) setActiveMonthIdx(idx);
+    else setActiveMonthIdx(0);
   }, [selectedYearId, years]);
 
   useEffect(() => {
@@ -253,7 +241,7 @@ function Planner() {
       toast.success(t("entryAdded"));
       setAddOpen(false);
       resetAddForm();
-      loadRows(selectedYearId);
+      loadPlanner(selectedYearId);
     } finally {
       setAddSaving(false);
     }
@@ -313,7 +301,7 @@ function Planner() {
     const { error } = await supabase.from("schedule_stops").update(patch as any).eq("id", stop.id);
     if (error) return toast.error(error.message);
     toast.success(t("saved"));
-    loadRows(selectedYearId);
+    loadPlanner(selectedYearId);
   };
 
   const confirmSelfAssign = async () => {
@@ -332,7 +320,7 @@ function Planner() {
     if (!data) return toast.error(t("alreadyAssigned"));
     toast.success(t("saved"));
     setSelfAssign(null);
-    loadRows(selectedYearId);
+    loadPlanner(selectedYearId);
   };
 
   return (
@@ -559,15 +547,12 @@ function DateCard({
               const canToggle = !isAdmin && isAssigned;
               return (
                 <div key={s.id} className={`text-sm space-y-2 min-w-0 ${done ? "opacity-70" : ""}`}>
-                  <div className="flex items-start gap-1.5 font-medium min-w-0">
-                    {done ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-success mt-0.5 shrink-0" />
-                    ) : (
-                      <MapPin className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
-                    )}
+                  <div className="flex items-center gap-2 font-semibold text-slate-900 min-w-0">
+                    <LocationLogo name={s.locations?.name} size="sm" />
                     <span className={`break-words min-w-0 ${done ? "line-through decoration-muted-foreground/60" : ""}`}>
                       {s.locations?.name ?? "—"}
                     </span>
+                    {done && <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 ml-1" />}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2 sm:ml-5 min-w-0">
                     <SelfAssignSlot

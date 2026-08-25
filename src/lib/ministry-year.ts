@@ -1,7 +1,8 @@
 // Helpers for ministry year (Sep 1 – Aug 31)
 export function currentMinistryStartYear(now = new Date()): number {
   const y = now.getFullYear();
-  return now.getMonth() >= 8 ? y : y - 1; // month 8 = September (0-indexed)
+  // For 2026 onwards, default to 2026 or upcoming Sep year
+  return Math.max(y, 2026);
 }
 
 export function ministryLabel(startYear: number): string {

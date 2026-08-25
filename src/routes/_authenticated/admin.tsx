@@ -1,341 +1,1244 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/use-auth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Trash2, ShieldAlert, Loader2 } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  ShieldAlert,
+  Loader2,
+  RefreshCw,
+  UserPlus,
+  Users,
+  Check,
+  Repeat,
+  MapPin,
+  Heart,
+  Calendar,
+  Search,
+  Truck,
+  UserCheck,
+  UserX,
+  X,
+  Crown,
+  Utensils,
+} from "lucide-react";
 import { toast } from "sonner";
 import { currentMinistryStartYear, ministryLabel } from "@/lib/ministry-year";
+import { LocationLogo } from "@/components/location-logo";
+import {
+  serverGetAdminData,
+  serverAddRecurringRule,
+  serverRemoveRecurringRule,
+  serverAddLocation,
+  serverRemoveLocation,
+  serverGenerateMinistryYear,
+  serverToggleRole,
+  serverSetApproval,
+  serverSyncAllToPeople,
+  serverAddRuleStop,
+  serverRemoveRuleStop,
+  serverUpdateRuleStop,
+  serverAddRuleRecipient,
+  serverRemoveRuleRecipient,
+  serverApplyTemplateToFuture,
+  serverApplyAssignmentsToFuture,
+  serverUpdateRecipientSize,
+} from "@/lib/admin.functions";
 
 export const Route = createFileRoute("/_authenticated/admin")({ component: AdminPage });
 
 const ROLES = ["admin", "driver", "coordinator"] as const;
 const WEEKDAYS_KEY = ["weekdaysShort"] as const;
 
+type UserTab = "team" | "drivers" | "coordinators" | "recipients" | "rejected" | "all";
+
 function AdminPage() {
   const { t, tArr } = useI18n();
   const { isAdmin } = useAuth();
+
+  const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<any[]>([]);
   const [years, setYears] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
   const [rules, setRules] = useState<any[]>([]);
+  const [ruleStops, setRuleStops] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [households, setHouseholds] = useState<any[]>([]);
+  const [people, setPeople] = useState<any[]>([]);
+
   const [busy, setBusy] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [newYear, setNewYear] = useState<number>(currentMinistryStartYear());
   const [newLoc, setNewLoc] = useState("");
   const [newRule, setNewRule] = useState<{ weekday: number; frequency: string }>({ weekday: 1, frequency: "weekly" });
 
+  const [hhPick, setHhPick] = useState<Record<string, string>>({});
+  const [locPick, setLocPick] = useState<Record<string, string>>({});
+
+  // User management tab & search state
+  const [userTab, setUserTab] = useState<UserTab>("team");
+  const [userSearch, setUserSearch] = useState("");
+
   const loadAll = async () => {
-    const [{ data: profs }, { data: yrs }, { data: locs }, { data: rls }] = await Promise.all([
-      supabase.from("profiles").select("id,full_name,email,approval_status,created_at").order("created_at", { ascending: false }),
-      supabase.from("ministry_years").select("*").order("start_year", { ascending: false }),
-      supabase.from("locations").select("*").order("name"),
-      supabase.from("recurring_schedule_rules").select("*").order("weekday"),
-    ]);
-    if (profs) {
-      const { data: ur } = await supabase.from("user_roles").select("user_id,role");
-      const map: Record<string, string[]> = {};
-      (ur ?? []).forEach((r: any) => { (map[r.user_id] ||= []).push(r.role); });
-      setUsers(profs.map((p: any) => ({ ...p, roles: map[p.id] ?? [] })));
+    try {
+      const res = await serverGetAdminData();
+      if (!res.success) {
+        toast.error(res.error || "Napaka pri nalaganju podatkov");
+        return;
+      }
+
+      const peopleList = res.people ?? [];
+      const peopleRolesList = res.peopleRoles ?? [];
+      const userRolesList = res.userRoles ?? [];
+      const householdsList = res.households ?? [];
+
+      const enriched = (res.profiles ?? []).map((p: any) => {
+        const person = peopleList.find(
+          (x: any) =>
+            (x.profile_id && String(x.profile_id) === String(p.id)) ||
+            (p.email && x.email && x.email.toLowerCase().trim() === p.email.toLowerCase().trim())
+        );
+
+        const personRoles = person
+          ? peopleRolesList.filter((r: any) => r.person_id === person.id).map((r: any) => r.role)
+          : [];
+
+        const directProfileRoles: string[] = [];
+        if (p.is_driver) directProfileRoles.push("driver");
+        if (p.kruh_role && ["driver", "coordinator", "admin"].includes(p.kruh_role)) {
+          directProfileRoles.push(p.kruh_role);
+        }
+
+        // When a person exists in Kruh Življenja, people_roles is the authoritative source!
+        const combinedRoles = person ? personRoles : directProfileRoles;
+
+        const allowedApps: string[] = p.allowed_apps || ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"];
+        const hasKruhAccess = allowedApps.includes("kruh-zivljenja") && p.approval_status !== "rejected";
+
+        const matchedHh = householdsList.find(
+          (h: any) =>
+            h.active &&
+            ((person?.id && h.person_id === person.id) ||
+              (p.full_name && h.name && h.name.toLowerCase().trim() === p.full_name.toLowerCase().trim()) ||
+              (p.name && h.name && h.name.toLowerCase().trim() === p.name.toLowerCase().trim()))
+        );
+        const isRec = !!matchedHh;
+        const recipientSize = Number(matchedHh?.size) || 1;
+        const householdId = matchedHh?.id ?? null;
+
+        return {
+          ...p,
+          personId: person?.id ?? null,
+          inPeople: !!person,
+          roles: combinedRoles,
+          hasKruhAccess,
+          isRecipient: isRec,
+          recipientSize,
+          householdId,
+        };
+      });
+
+      setUsers(enriched);
+      setYears(res.years ?? []);
+      setLocations(res.locations ?? []);
+      setRules(res.rules ?? []);
+      setRuleStops(res.ruleStops ?? []);
+      setTemplates(res.templates ?? []);
+      setHouseholds(householdsList);
+      setPeople(peopleList);
+    } catch (err: any) {
+      console.error("loadAll error:", err);
+      toast.error(err?.message ?? "Napaka pri nalaganju podatkov");
+    } finally {
+      setLoading(false);
     }
-    setYears(yrs ?? []);
-    setLocations(locs ?? []);
-    setRules(rls ?? []);
   };
-  useEffect(() => { if (isAdmin) loadAll(); }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) loadAll();
+  }, [isAdmin]);
+
+  // Tab classifications
+  const isVolunteer = (u: any) =>
+    u.hasKruhAccess &&
+    (u.roles.includes("driver") ||
+      u.roles.includes("coordinator") ||
+      u.roles.includes("admin"));
+  const isDriver = (u: any) => u.hasKruhAccess && u.roles.includes("driver");
+  const isCoordinator = (u: any) => u.hasKruhAccess && u.roles.includes("coordinator");
+  const isRecipient = (u: any) => u.hasKruhAccess && u.isRecipient;
+  const isRejected = (u: any) => !u.hasKruhAccess || u.approval_status === "rejected";
+
+  const teamCount = useMemo(() => users.filter(isVolunteer).length, [users]);
+  const driverCount = useMemo(() => users.filter(isDriver).length, [users]);
+  const coordinatorCount = useMemo(() => users.filter(isCoordinator).length, [users]);
+  const recipientCount = useMemo(() => users.filter(isRecipient).length, [users]);
+  const rejectedCount = useMemo(() => users.filter(isRejected).length, [users]);
+  const allCount = users.length;
+
+  const filteredUsers = useMemo(() => {
+    let list = users;
+    if (userTab === "team") {
+      list = users.filter(isVolunteer);
+    } else if (userTab === "drivers") {
+      list = users.filter(isDriver);
+    } else if (userTab === "coordinators") {
+      list = users.filter(isCoordinator);
+    } else if (userTab === "recipients") {
+      list = users.filter(isRecipient);
+    } else if (userTab === "rejected") {
+      list = users.filter(isRejected);
+    }
+
+    if (userSearch.trim()) {
+      const q = userSearch.toLowerCase().trim();
+      list = list.filter(
+        (u) =>
+          (u.full_name && u.full_name.toLowerCase().includes(q)) ||
+          (u.name && u.name.toLowerCase().includes(q)) ||
+          (u.email && u.email.toLowerCase().includes(q)) ||
+          (u.phone && u.phone.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [users, userTab, userSearch]);
 
   if (!isAdmin) {
     return (
-      <Card><CardContent className="py-12 text-center text-muted-foreground">
-        <ShieldAlert className="h-10 w-10 mx-auto mb-2 text-warning" />
-        Admin only.
-      </CardContent></Card>
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">
+          <ShieldAlert className="h-10 w-10 mx-auto mb-2 text-warning" />
+          Admin only.
+        </CardContent>
+      </Card>
     );
   }
-  const [matchDialog, setMatchDialog] = useState<{ userId: string; candidates: any[] } | null>(null);
 
-  const syncPersonForApproved = async (userId: string, opts?: { linkTo?: string; forceCreate?: boolean }) => {
-    const { data, error } = await supabase.rpc("link_or_create_person_for_profile", {
-      _profile_id: userId,
-      _link_to_person_id: opts?.linkTo ?? undefined,
-      _force_create: opts?.forceCreate ?? false,
+  const addPersonFromProfile = async (u: any) => {
+    const res = await serverToggleRole({
+      data: {
+        userId: u.id,
+        authUserId: u.auth_user_id,
+        fullName: u.full_name || u.name || u.email || "Neznano",
+        email: u.email,
+        phone: u.phone,
+        role: u.is_driver ? "driver" : "coordinator",
+        enabled: !!u.is_driver,
+      },
     });
-    if (error) { toast.error(error.message); return; }
-    const result = data as any;
-    if (result?.status === "needs_choice") {
-      setMatchDialog({ userId, candidates: result.candidates ?? [] });
-    } else if (result?.status === "linked") {
-      toast.success(opts?.forceCreate ? t("personCreated") : t("personLinked"));
-    }
-  };
 
-  const toggleRole = async (userId: string, role: typeof ROLES[number], on: boolean) => {
-    if (on) await supabase.from("user_roles").insert({ user_id: userId, role });
-    else await supabase.from("user_roles").delete().eq("user_id", userId).eq("role", role);
-    if (role === "driver" || role === "coordinator") {
-      await supabase.rpc("sync_person_role", { _profile_id: userId, _role: role, _enabled: on });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri dodajanju osebe");
+      return;
     }
+    toast.success(t("personCreated"));
     loadAll();
   };
 
+  const syncAllMembersToPeople = async () => {
+    setSyncingAll(true);
+    try {
+      const res = await serverSyncAllToPeople();
+      if (!res.success) {
+        toast.error(res.error || "Napaka pri sinhronizaciji");
+        return;
+      }
+      toast.success(`${t("syncAllSuccess")} (+${res.count})`);
+      loadAll();
+    } finally {
+      setSyncingAll(false);
+    }
+  };
 
-  const generateYear = async () => {
+  const toggleRole = async (u: any, role: typeof ROLES[number] | "recipient", on: boolean) => {
+    const res = await serverToggleRole({
+      data: {
+        userId: u.id,
+        authUserId: u.auth_user_id,
+        fullName: u.full_name || u.name || u.email || "Neznano",
+        email: u.email,
+        phone: u.phone,
+        role,
+        enabled: on,
+      },
+    });
+
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri spreminjanju vloge");
+      return;
+    }
+    toast.success(role === "recipient" ? "Status prejemnika posodobljen" : t("roleUpdated"));
+    loadAll();
+  };
+
+  const updateRecipientSize = async (u: any, size: number) => {
+    const res = await serverUpdateRecipientSize({
+      data: {
+        householdId: u.householdId,
+        personId: u.personId,
+        fullName: u.full_name || u.name,
+        size,
+      },
+    });
+
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri posodobitvi velikosti");
+      return;
+    }
+    toast.success(`Št. oseb v družini nastavljeno na ${size}`);
+    loadAll();
+  };
+
+  const generateYear = async (yearToGen = newYear) => {
     setBusy(true);
-    const { error } = await supabase.rpc("generate_ministry_year", { _start_year: newYear });
-    setBusy(false);
-    if (error) return toast.error(error.message);
-    toast.success(t("yearGenerated"));
-    loadAll();
+    try {
+      const res = await serverGenerateMinistryYear({ data: { startYear: yearToGen } });
+      if (!res.success) {
+        toast.error(res.error || "Napaka pri ustvarjanju terminov");
+        return;
+      }
+      toast.success(`${t("datesGenerated")} (${res.dateCount} terminov)`);
+      loadAll();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const addLocation = async () => {
     if (!newLoc.trim()) return;
-    await supabase.from("locations").insert({ name: newLoc.trim() });
+    const res = await serverAddLocation({ data: { name: newLoc.trim() } });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri dodajanju lokacije");
+      return;
+    }
     setNewLoc("");
+    toast.success(t("saved"));
+    loadAll();
+  };
+
+  const removeLocation = async (id: string) => {
+    const res = await serverRemoveLocation({ data: { id } });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri brisanju lokacije");
+      return;
+    }
+    toast.success(t("deleted"));
     loadAll();
   };
 
   const addRule = async () => {
-    const { error } = await supabase.from("recurring_schedule_rules").insert({
-      weekday: newRule.weekday,
-      frequency: newRule.frequency,
+    const res = await serverAddRecurringRule({
+      data: {
+        weekday: newRule.weekday,
+        frequency: newRule.frequency,
+      },
     });
-    if (error) {
-      if (error.code === "23505") return toast.error(t("ruleExists"));
-      return toast.error(error.message);
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri dodajanju pravila");
+      return;
     }
+    toast.success(t("saved"));
     loadAll();
   };
 
-  const removeRule = async (id: string) => { await supabase.from("recurring_schedule_rules").delete().eq("id", id); loadAll(); };
-  const removeLoc = async (id: string) => { await supabase.from("locations").delete().eq("id", id); loadAll(); };
-
-  const setApproval = async (userId: string, status: "approved" | "rejected" | "pending") => {
-    const patch: any = { approval_status: status };
-    if (status === "approved") patch.approved_at = new Date().toISOString();
-    const { error } = await supabase.from("profiles").update(patch).eq("id", userId);
-    if (error) return toast.error(error.message);
-    toast.success(status === "approved" ? t("userApproved") : status === "rejected" ? t("userRejected") : "");
-    if (status === "approved") {
-      await syncPersonForApproved(userId);
+  const removeRule = async (id: string) => {
+    const res = await serverRemoveRecurringRule({ data: { id } });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri brisanju pravila");
+      return;
     }
+    toast.success(t("deleted"));
     loadAll();
   };
 
-  const pendingUsers = users.filter((u) => u.approval_status === "pending");
-  const otherUsers = users.filter((u) => u.approval_status !== "pending");
+  const addRuleStop = async (ruleId: string) => {
+    const lid = locPick[ruleId];
+    if (!lid) return;
+    const existing = ruleStops.filter((s) => s.rule_id === ruleId);
+    const nextOrder = (existing[existing.length - 1]?.sort_order ?? -1) + 1;
+    const res = await serverAddRuleStop({
+      data: {
+        ruleId,
+        locationId: lid,
+        sortOrder: nextOrder,
+      },
+    });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri dodajanju postaje");
+      return;
+    }
+    setLocPick({ ...locPick, [ruleId]: "" });
+    toast.success(t("saved"));
+    loadAll();
+  };
+
+  const removeRuleStop = async (id: string) => {
+    const res = await serverRemoveRuleStop({ data: { id } });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri brisanju postaje");
+      return;
+    }
+    toast.success(t("deleted"));
+    loadAll();
+  };
+
+  const updateRuleStop = async (id: string, patch: any) => {
+    const res = await serverUpdateRuleStop({
+      data: {
+        id,
+        default_driver_id: patch.default_driver_id,
+        default_coordinator_id: patch.default_coordinator_id,
+      },
+    });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri shranjevanju");
+      return;
+    }
+    toast.success(t("defaultsSaved"));
+    loadAll();
+  };
+
+  const applyAssignments = async (ruleStopId: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await serverApplyAssignmentsToFuture({
+      data: {
+        ruleStopId,
+        fromDate: today,
+        override: true,
+      },
+    });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri uporabi");
+      return;
+    }
+    toast.success(`${t("appliedToFuture")} (${res.affected} terminov)`);
+  };
+
+  const addRuleRecipient = async (ruleId: string) => {
+    const hid = hhPick[ruleId];
+    if (!hid) return;
+    const res = await serverAddRuleRecipient({
+      data: {
+        ruleId,
+        householdId: hid,
+      },
+    });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri dodajanju prejemnika");
+      return;
+    }
+    setHhPick({ ...hhPick, [ruleId]: "" });
+    toast.success(t("saved"));
+    loadAll();
+  };
+
+  const removeRuleRecipient = async (id: string) => {
+    const res = await serverRemoveRuleRecipient({ data: { id } });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri brisanju prejemnika");
+      return;
+    }
+    toast.success(t("deleted"));
+    loadAll();
+  };
+
+  const applyRecipients = async (ruleId: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await serverApplyTemplateToFuture({
+      data: {
+        ruleId,
+        fromDate: today,
+      },
+    });
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri uporabi predloge");
+      return;
+    }
+    toast.success(`${t("appliedToFuture")} (+${res.inserted} / -${res.deleted})`);
+  };
+
+  const setApproval = async (u: any, status: "approved" | "rejected" | "pending") => {
+    const res = await serverSetApproval({
+      data: {
+        userId: u.id,
+        allowedApps: u.allowed_apps,
+        status,
+      },
+    });
+
+    if (!res.success) {
+      toast.error(res.error || "Napaka pri posodobitvi statusa");
+      return;
+    }
+    toast.success(status === "approved" ? t("userApproved") : t("userRejected"));
+    loadAll();
+  };
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold">{t("admin")}</h1>
+    <div className="space-y-8 max-w-5xl mx-auto pb-12">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">{t("admin")}</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Upravljanje let služenja, ponavljajočega tedenskega urnika, lokacij in članov.
+          </p>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader><CardTitle>{t("ministryYears")}</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
+      {/* 1. MINSTRY YEARS */}
+      <Card className="border-slate-200/80 shadow-xs">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Calendar className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">{t("ministryYears")}</CardTitle>
+          </div>
+          <CardDescription>
+            Ustvarjanje in upravljanje terminov za celotno leto (1. september – 31. avgust).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-2 items-end">
             <div>
-              <label className="text-xs text-muted-foreground">{t("startYear")}</label>
-              <Input type="number" value={newYear} onChange={(e) => setNewYear(Number(e.target.value))} className="w-32" />
+              <label className="text-xs font-medium text-slate-600 mb-1 block">{t("startYear")}</label>
+              <Input
+                type="number"
+                value={newYear}
+                onChange={(e) => setNewYear(Number(e.target.value))}
+                className="w-32"
+              />
             </div>
-            <Button onClick={generateYear} disabled={busy}>
-              {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}{t("generateYear")}
+            <Button onClick={() => generateYear(newYear)} disabled={busy} className="bg-primary text-white">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-1.5" />}
+              {t("generateYear")}
             </Button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {years.map((y) => <Badge key={y.id} variant="secondary">{ministryLabel(y.start_year)}</Badge>)}
+
+          <div className="flex flex-wrap gap-2 items-center pt-2 border-t border-slate-100">
+            <span className="text-xs font-semibold text-muted-foreground mr-1">Ustvarjena leta:</span>
+            {years.map((y) => (
+              <div key={y.id} className="flex items-center gap-1.5 bg-slate-100/90 rounded-lg p-1 border border-slate-200">
+                <Badge variant="secondary" className="text-sm font-semibold px-2.5 py-0.5 bg-white text-slate-800 border">
+                  {ministryLabel(y.start_year)}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs text-primary hover:bg-primary/10"
+                  onClick={() => generateYear(y.start_year)}
+                  title={t("regenerateDates")}
+                  disabled={busy}
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  {t("regenerateDates")}
+                </Button>
+              </div>
+            ))}
             {years.length === 0 && <span className="text-sm text-muted-foreground">—</span>}
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle>{t("locations")}</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex gap-2">
-            <Input value={newLoc} onChange={(e) => setNewLoc(e.target.value)} placeholder={t("location")} />
-            <Button onClick={addLocation}><Plus className="h-4 w-4 mr-1" />{t("addLocation")}</Button>
+      {/* 2. LOCATIONS */}
+      <Card className="border-slate-200/80 shadow-xs">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <MapPin className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">{t("locations")}</CardTitle>
           </div>
-          <ul className="divide-y">
+          <CardDescription>
+            Seznam vseh prevzemnih mest (KFC, Spar, itd.), ki se nato dodelijo posameznim dnevom.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2 max-w-md">
+            <Input
+              value={newLoc}
+              onChange={(e) => setNewLoc(e.target.value)}
+              placeholder="Vpiši novo lokacijo (npr. KFC Celje)..."
+              onKeyDown={(e) => e.key === "Enter" && addLocation()}
+            />
+            <Button onClick={addLocation}>
+              <Plus className="h-4 w-4 mr-1" />
+              {t("addLocation")}
+            </Button>
+          </div>
+
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2 pt-2">
             {locations.map((l) => (
-              <li key={l.id} className="flex items-center justify-between py-2">
-                <span>{l.name}</span>
-                <Button size="icon" variant="ghost" onClick={() => removeLoc(l.id)}><Trash2 className="h-4 w-4" /></Button>
-              </li>
+              <div
+                key={l.id}
+                className="flex items-center justify-between px-3 py-2 rounded-lg border bg-slate-50/50 border-slate-200 text-sm font-medium"
+              >
+                <div className="flex items-center gap-2">
+                  <LocationLogo name={l.name} size="sm" />
+                  <span>{l.name}</span>
+                </div>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                  onClick={() => removeLocation(l.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             ))}
-          </ul>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>{t("recurringRules")}</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid sm:grid-cols-3 gap-2">
-            <Select value={String(newRule.weekday)} onValueChange={(v) => setNewRule({ ...newRule, weekday: Number(v) })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {tArr(WEEKDAYS_KEY[0]).map((w, i) => <SelectItem key={i} value={String(i)}>{w}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={newRule.frequency} onValueChange={(v) => setNewRule({ ...newRule, frequency: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="weekly">{t("weekly")}</SelectItem>
-                <SelectItem value="biweekly">{t("biweekly")}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button onClick={addRule}><Plus className="h-4 w-4 mr-1" />{t("addRule")}</Button>
+            {locations.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full">Ni vnesenih lokacij.</p>
+            )}
           </div>
-          <p className="text-xs text-muted-foreground">{t("ruleHint")}</p>
-          <ul className="divide-y">
-            {rules.map((r) => (
-              <li key={r.id} className="flex items-center justify-between py-2">
-                <span>{tArr(WEEKDAYS_KEY[0])[r.weekday]} · {r.frequency === "weekly" ? t("weekly") : t("biweekly")}</span>
-                <Button size="icon" variant="ghost" onClick={() => removeRule(r.id)}><Trash2 className="h-4 w-4" /></Button>
-              </li>
-            ))}
-          </ul>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle>{t("pendingUsers")} {pendingUsers.length > 0 && <Badge variant="destructive" className="ml-2">{pendingUsers.length}</Badge>}</CardTitle></CardHeader>
-        <CardContent>
-          {pendingUsers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noPendingUsers")}</p>
-          ) : (
-            <ul className="divide-y">
-              {pendingUsers.map((u) => (
-                <li key={u.id} className="py-3 space-y-2">
-                  <div className="flex items-start justify-between flex-wrap gap-2">
-                    <div>
-                      <div className="font-medium">{u.full_name ?? u.email}</div>
-                      <div className="text-xs text-muted-foreground">{u.email}</div>
-                      {u.created_at && (
-                        <div className="text-xs text-muted-foreground">
-                          {t("signedUpOn")}: {new Date(u.created_at).toLocaleDateString()}
+      {/* 3. RECURRING WEEKLY SCHEDULE & TEMPLATES */}
+      <Card className="border-slate-200/80 shadow-xs">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Repeat className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Ponavljajoči tedenski urnik & predloge</CardTitle>
+          </div>
+          <CardDescription>
+            Določite, katere dni v tednu se izvajajo prevzemi, katere postaje/lokacije se obiščejo in katera gospodinjstva prejmejo pomoč.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Add new weekday rule */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+            <span className="text-xs font-semibold text-slate-700 block">Dodaj nov dan v tednu za prevzem:</span>
+            <div className="grid sm:grid-cols-3 gap-2">
+              <Select
+                value={String(newRule.weekday)}
+                onValueChange={(v) => setNewRule({ ...newRule, weekday: Number(v) })}
+              >
+                <SelectTrigger className="bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {tArr(WEEKDAYS_KEY[0]).map((w, i) => (
+                    <SelectItem key={i} value={String(i)}>
+                      {w}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={newRule.frequency}
+                onValueChange={(v) => setNewRule({ ...newRule, frequency: v })}
+              >
+                <SelectTrigger className="bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weekly">{t("weekly")}</SelectItem>
+                  <SelectItem value="biweekly">{t("biweekly")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button onClick={addRule} className="gap-1.5">
+                <Plus className="h-4 w-4" />
+                {t("addRule")}
+              </Button>
+            </div>
+          </div>
+
+          {/* Active Rules List */}
+          <div className="space-y-4">
+            {rules.length === 0 ? (
+              <p className="text-center py-8 text-sm text-muted-foreground border-2 border-dashed rounded-xl">
+                Ni dodanih ponavljajočih pravil. Zgoraj izberite dan in kliknite &quot;+ Dodaj pravilo&quot;.
+              </p>
+            ) : (
+              rules.map((r) => {
+                const stops = ruleStops.filter((s) => s.rule_id === r.id);
+                const items = templates.filter((tp) => tp.rule_id === r.id);
+                const usedHhIds = new Set(items.map((i) => i.household_id));
+                const availableHh = households.filter((h) => !usedHhIds.has(h.id));
+                const usedLocIds = new Set(stops.map((s) => s.location_id));
+                const availableLoc = locations.filter((l) => !usedLocIds.has(l.id));
+
+                return (
+                  <div
+                    key={r.id}
+                    className="border border-slate-200 rounded-xl p-4 bg-white shadow-xs space-y-4"
+                  >
+                    {/* Day Header */}
+                    <div className="flex items-center justify-between pb-3 border-b">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-base text-slate-900">
+                          {tArr(WEEKDAYS_KEY[0])[r.weekday]}
+                        </span>
+                        <Badge variant="secondary" className="font-medium text-xs">
+                          {r.frequency === "weekly" ? t("weekly") : t("biweekly")}
+                        </Badge>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 h-8 px-2.5 gap-1 text-xs"
+                        onClick={() => removeRule(r.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Odstrani dan
+                      </Button>
+                    </div>
+
+                    {/* STOPS / LOCATIONS */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <MapPin className="h-3.5 w-3.5 text-primary" />
+                          Postaje / Lokacije za ta dan ({stops.length})
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {stops.map((st) => (
+                          <div
+                            key={st.id}
+                            className="p-3 bg-slate-50/80 rounded-lg border border-slate-200/80 flex items-center justify-between gap-3 flex-wrap text-sm"
+                          >
+                            <div className="font-semibold min-w-36 text-slate-800 flex items-center gap-2">
+                              <LocationLogo name={st.locations?.name} size="sm" />
+                              <span>{st.locations?.name ?? "Neznana lokacija"}</span>
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-wrap flex-1 justify-end">
+                              {/* Driver selection */}
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">Voznik:</span>
+                                <Select
+                                  value={st.default_driver_id ?? "none"}
+                                  onValueChange={(val) =>
+                                    updateRuleStop(st.id, {
+                                      default_driver_id: val === "none" ? null : val,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 text-xs w-36 bg-white">
+                                    <SelectValue placeholder="Brez" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">— Brez —</SelectItem>
+                                    {people.map((p) => (
+                                      <SelectItem key={p.id} value={p.id}>
+                                        {p.full_name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {/* Coordinator selection */}
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">Razdeljevalec:</span>
+                                <Select
+                                  value={st.default_coordinator_id ?? "none"}
+                                  onValueChange={(val) =>
+                                    updateRuleStop(st.id, {
+                                      default_coordinator_id: val === "none" ? null : val,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 text-xs w-36 bg-white">
+                                    <SelectValue placeholder="Brez" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">— Brez —</SelectItem>
+                                    {people.map((p) => (
+                                      <SelectItem key={p.id} value={p.id}>
+                                        {p.full_name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {/* Apply to future dates */}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-2 text-xs"
+                                onClick={() => applyAssignments(st.id)}
+                                title="Uporabi izbrani osebi za vse prihodnje termine v načrtovalcu"
+                              >
+                                {t("applyToFuture")}
+                              </Button>
+
+                              {/* Delete Stop */}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => removeRuleStop(st.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Add Stop to Rule */}
+                        <div className="flex items-center gap-2 pt-1 max-w-md">
+                          <Select
+                            value={locPick[r.id] ?? ""}
+                            onValueChange={(v) => setLocPick({ ...locPick, [r.id]: v })}
+                          >
+                            <SelectTrigger className="h-8 text-xs bg-white">
+                              <SelectValue placeholder="Izberi lokacijo za dodajanje..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableLoc.map((l) => (
+                                <SelectItem key={l.id} value={l.id}>
+                                  {l.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-8 text-xs gap-1 whitespace-nowrap"
+                            onClick={() => addRuleStop(r.id)}
+                            disabled={!locPick[r.id]}
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            {t("addStop")}
+                          </Button>
                         </div>
-                      )}
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={() => setApproval(u.id, "approved")}>{t("approve")}</Button>
-                      <Button size="sm" variant="outline" onClick={() => setApproval(u.id, "rejected")}>{t("reject")}</Button>
+
+                    {/* RECIPIENTS */}
+                    <div className="space-y-3 pt-3 border-t border-slate-100">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <Heart className="h-3.5 w-3.5 text-primary" />
+                          Skupni prejemniki za ta dan ({items.length})
+                        </span>
+                        {items.length > 0 && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs text-primary hover:bg-primary/10"
+                            onClick={() => applyRecipients(r.id)}
+                          >
+                            Uporabi prejemnike za prihodnje termine
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {items.map((tp) => (
+                          <Badge
+                            key={tp.id}
+                            variant="outline"
+                            className="bg-slate-50 pl-2.5 pr-1 py-1 gap-1 text-xs border-slate-300 flex items-center"
+                          >
+                            <span>
+                              {tp.recipient_households?.name} (št. oseb: {tp.recipient_households?.size})
+                            </span>
+                            <button
+                              onClick={() => removeRuleRecipient(tp.id)}
+                              className="text-muted-foreground hover:text-destructive p-0.5 rounded"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                        {items.length === 0 && (
+                          <span className="text-xs text-muted-foreground">Ni dodeljenih prejemnikov za ta dan.</span>
+                        )}
+                      </div>
+
+                      {/* Add Recipient to Rule */}
+                      <div className="flex items-center gap-2 pt-1 max-w-md">
+                        <Select
+                          value={hhPick[r.id] ?? ""}
+                          onValueChange={(v) => setHhPick({ ...hhPick, [r.id]: v })}
+                        >
+                          <SelectTrigger className="h-8 text-xs bg-white">
+                            <SelectValue placeholder="Izberi gospodinjstvo za dodajanje..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableHh.map((h) => (
+                              <SelectItem key={h.id} value={h.id}>
+                                {h.name} (velikost: {h.size})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-8 text-xs gap-1 whitespace-nowrap"
+                          onClick={() => addRuleRecipient(r.id)}
+                          disabled={!hhPick[r.id]}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {t("addRecipient")}
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {ROLES.map((r) => {
-                      const on = u.roles.includes(r);
-                      return (
-                        <button key={r} onClick={() => toggleRole(u.id, r, !on)}
-                          className={`px-2 py-1 rounded-full text-xs border ${on ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground"}`}>
-                          {t((r === "admin" ? "adminRole" : r) as any)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+                );
+              })
+            )}
+          </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle>{t("manageUsers")}</CardTitle></CardHeader>
-        <CardContent>
-          <ul className="divide-y">
-            {otherUsers.map((u) => (
-              <li key={u.id} className="py-3">
+      {/* 4. USER MANAGEMENT WITH CLEAN TABS, RECIPIENTS & SEARCH */}
+      <Card className="border-slate-200/80 shadow-xs">
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">{t("manageUsers")}</CardTitle>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-medium">
+                {t("driversTab")}: <strong className="text-slate-800">{driverCount}</strong>
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-medium">
+                {t("coordinatorsTab")}: <strong className="text-slate-800">{coordinatorCount}</strong>
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 font-medium">
+                {t("recipientsTab")}: <strong className="text-rose-900">{recipientCount}</strong>
+              </span>
+            </div>
+          </div>
+          <CardDescription>
+            Pregled in dodeljevanje vlog (Voznik, Razdeljevalec, Administrator, Prejemnik) za služenje pri Kruhu Življenja.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* TABS NAVIGATION */}
+          <div className="flex flex-wrap gap-1.5 border-b pb-3">
+            {/* 1. Ekipa (Vozniki & Razdeljevalci) - DEFAULT */}
+            <button
+              type="button"
+              onClick={() => setUserTab("team")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                userTab === "team"
+                  ? "bg-primary text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200/70"
+              }`}
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              <span>{t("activeTeam")}</span>
+              <Badge
+                variant="secondary"
+                className={`px-1.5 py-0 text-[10px] rounded-md ${
+                  userTab === "team" ? "bg-white/20 text-white border-0" : "bg-white text-slate-800"
+                }`}
+              >
+                {teamCount}
+              </Badge>
+            </button>
+
+            {/* 2. Vozniki */}
+            <button
+              type="button"
+              onClick={() => setUserTab("drivers")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                userTab === "drivers"
+                  ? "bg-primary text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200/70"
+              }`}
+            >
+              <Truck className="h-3.5 w-3.5" />
+              <span>{t("driversTab")}</span>
+              <Badge
+                variant="secondary"
+                className={`px-1.5 py-0 text-[10px] rounded-md ${
+                  userTab === "drivers" ? "bg-white/20 text-white border-0" : "bg-white text-slate-800"
+                }`}
+              >
+                {driverCount}
+              </Badge>
+            </button>
+
+            {/* 3. Razdeljevalci */}
+            <button
+              type="button"
+              onClick={() => setUserTab("coordinators")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                userTab === "coordinators"
+                  ? "bg-[#93032E] text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200/70"
+              }`}
+            >
+              <Utensils className="h-3.5 w-3.5" />
+              <span>{t("coordinatorsTab")}</span>
+              <Badge
+                variant="secondary"
+                className={`px-1.5 py-0 text-[10px] rounded-md ${
+                  userTab === "coordinators" ? "bg-white/20 text-white border-0" : "bg-white text-slate-800"
+                }`}
+              >
+                {coordinatorCount}
+              </Badge>
+            </button>
+
+            {/* 4. Prejemniki */}
+            <button
+              type="button"
+              onClick={() => setUserTab("recipients")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                userTab === "recipients"
+                  ? "bg-rose-700 text-white shadow-xs"
+                  : "bg-rose-50 text-rose-800 hover:bg-rose-100/80 border border-rose-200/60"
+              }`}
+            >
+              <Heart className="h-3.5 w-3.5" />
+              <span>{t("recipientsTab")}</span>
+              <Badge
+                variant="secondary"
+                className={`px-1.5 py-0 text-[10px] rounded-md ${
+                  userTab === "recipients" ? "bg-white/20 text-white border-0" : "bg-white text-rose-900 border"
+                }`}
+              >
+                {recipientCount}
+              </Badge>
+            </button>
+
+            {/* 5. Zavrnjeni */}
+            <button
+              type="button"
+              onClick={() => setUserTab("rejected")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                userTab === "rejected"
+                  ? "bg-destructive text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200/70"
+              }`}
+            >
+              <UserX className="h-3.5 w-3.5" />
+              <span>{t("rejectedTab")}</span>
+              <Badge
+                variant="secondary"
+                className={`px-1.5 py-0 text-[10px] rounded-md ${
+                  userTab === "rejected" ? "bg-white/20 text-white border-0" : "bg-white text-slate-800"
+                }`}
+              >
+                {rejectedCount}
+              </Badge>
+            </button>
+
+            {/* 6. Vsi člani (Placed at the end) */}
+            <button
+              type="button"
+              onClick={() => setUserTab("all")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ml-auto ${
+                userTab === "all"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200/70"
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" />
+              <span>{t("allMembersTab")}</span>
+              <Badge
+                variant="secondary"
+                className={`px-1.5 py-0 text-[10px] rounded-md ${
+                  userTab === "all" ? "bg-white/20 text-white border-0" : "bg-white text-slate-800"
+                }`}
+              >
+                {allCount}
+              </Badge>
+            </button>
+          </div>
+
+          {/* QUICK SEARCH */}
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder={t("searchUsersPlaceholder")}
+              className="pl-9 pr-8 text-xs h-9 bg-slate-50/50"
+            />
+            {userSearch && (
+              <button
+                onClick={() => setUserSearch("")}
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* USER LIST */}
+          <ul className="divide-y divide-slate-100">
+            {filteredUsers.map((u) => (
+              <li key={u.id} className="py-3.5 hover:bg-slate-50/50 px-2 rounded-lg transition-colors">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div>
-                    <div className="font-medium flex items-center gap-2">
-                      {u.full_name ?? u.email}
-                      {u.approval_status === "rejected" && (
-                        <Badge variant="destructive" className="text-[10px]">{t("reject")}</Badge>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium flex items-center gap-2 flex-wrap text-slate-900">
+                      <span>{u.full_name ?? u.email}</span>
+                      {u.isRecipient && (
+                        <Badge variant="outline" className="text-[10px] text-rose-700 bg-rose-50 border-rose-300 font-medium whitespace-nowrap px-1.5 py-0.5 gap-1">
+                          <Heart className="h-2.5 w-2.5 fill-rose-500 text-rose-500 mr-0.5" />
+                          {t("recipient")} ({u.recipientSize ?? 1})
+                        </Badge>
+                      )}
+                      {!u.hasKruhAccess && (
+                        <Badge variant="destructive" className="text-[10px] whitespace-nowrap">
+                          {t("rejected")}
+                        </Badge>
+                      )}
+                      {u.inPeople ? (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] text-emerald-700 bg-emerald-50 border-emerald-300 font-medium whitespace-nowrap px-2 py-0.5"
+                        >
+                          <Check className="h-2.5 w-2.5 mr-1" />
+                          {t("inPeopleBadge")}
+                        </Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[11px] text-primary hover:bg-primary/10 whitespace-nowrap"
+                          onClick={() => addPersonFromProfile(u)}
+                        >
+                          <UserPlus className="h-3 w-3 mr-1" />
+                          {t("addToPeople")}
+                        </Button>
                       )}
                     </div>
-                    <div className="text-xs text-muted-foreground">{u.email}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {[u.phone, u.email, u.address || u.street].filter(Boolean).join(" · ")}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1 items-center">
-                    {ROLES.map((r) => {
-                      const on = u.roles.includes(r);
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {/* Admin Button */}
+                    {(() => {
+                      const on = u.roles.includes("admin");
                       return (
-                        <button key={r} onClick={() => toggleRole(u.id, r, !on)}
-                          className={`px-2 py-1 rounded-full text-xs border ${on ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground"}`}>
-                          {t((r === "admin" ? "adminRole" : r) as any)}
+                        <button
+                          key="admin"
+                          onClick={() => toggleRole(u, "admin", !on)}
+                          className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                            on
+                              ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600 shadow-2xs"
+                              : "border-amber-200/90 text-amber-800 bg-amber-50/50 hover:bg-amber-100/70"
+                          }`}
+                        >
+                          <Crown className={`h-3 w-3 ${on ? "text-white fill-white/20" : "text-amber-600"}`} />
+                          <span>{t("adminRole")}</span>
                         </button>
                       );
-                    })}
-                    {u.approval_status === "approved" ? (
-                      <Button size="sm" variant="ghost" onClick={() => setApproval(u.id, "rejected")}>{t("reject")}</Button>
+                    })()}
+
+                    {/* Driver Button */}
+                    {(() => {
+                      const on = u.roles.includes("driver");
+                      return (
+                        <button
+                          key="driver"
+                          onClick={() => toggleRole(u, "driver", !on)}
+                          className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                            on
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-2xs"
+                              : "border-emerald-200/90 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100/70"
+                          }`}
+                        >
+                          <Truck className={`h-3 w-3 ${on ? "text-white" : "text-emerald-600"}`} />
+                          <span>{t("driver")}</span>
+                        </button>
+                      );
+                    })()}
+
+                    {/* Distributor Button */}
+                    {(() => {
+                      const on = u.roles.includes("coordinator");
+                      return (
+                        <button
+                          key="coordinator"
+                          onClick={() => toggleRole(u, "coordinator", !on)}
+                          className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                            on
+                              ? "bg-[#93032E] hover:bg-[#7b0226] text-white border-[#93032E] shadow-2xs"
+                              : "border-rose-200/90 text-[#93032E] bg-rose-50/50 hover:bg-rose-100/70"
+                          }`}
+                        >
+                          <Utensils className={`h-3 w-3 ${on ? "text-white" : "text-[#93032E]"}`} />
+                          <span>{t("coordinator")}</span>
+                        </button>
+                      );
+                    })()}
+
+                    {/* Prejemnik Role Toggle */}
+                    <button
+                      onClick={() => toggleRole(u, "recipient", !u.isRecipient)}
+                      className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                        u.isRecipient
+                          ? "bg-rose-700 text-white border-rose-700 shadow-2xs"
+                          : "border-rose-200 text-rose-700 bg-rose-50/50 hover:bg-rose-100"
+                      }`}
+                    >
+                      <Heart className={`h-3 w-3 ${u.isRecipient ? "fill-white text-white" : "text-rose-600"}`} />
+                      <span>{t("recipient")}</span>
+                    </button>
+
+                    {/* Quick Family Size Selector for Recipients */}
+                    {u.isRecipient && (
+                      <div
+                        className="inline-flex items-center gap-1 bg-slate-100 border border-slate-200/90 rounded-full px-2 py-0.5 text-xs text-slate-800 shadow-2xs"
+                        title="Število oseb v družini"
+                      >
+                        <Users className="h-3.5 w-3.5 text-slate-600 shrink-0" />
+                        <select
+                          value={u.recipientSize ?? 1}
+                          onChange={(e) => updateRecipientSize(u, Number(e.target.value))}
+                          className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer text-xs pr-1"
+                          title="Hitra izbira števila oseb v družini"
+                        >
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {u.hasKruhAccess ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 h-7 text-xs ml-1"
+                        onClick={() => setApproval(u, "rejected")}
+                        title="Zavrni dostop samo za Kruh Življenja (ohrani profil v bazi cerkve)"
+                      >
+                        {t("reject")}
+                      </Button>
                     ) : (
-                      <Button size="sm" variant="ghost" onClick={() => setApproval(u.id, "approved")}>{t("reactivate")}</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-primary hover:bg-primary/10 h-7 text-xs ml-1"
+                        onClick={() => setApproval(u, "approved")}
+                      >
+                        {t("reactivate")}
+                      </Button>
                     )}
                   </div>
                 </div>
               </li>
             ))}
+            {filteredUsers.length === 0 && (
+              <li className="py-8 text-center text-sm text-muted-foreground">
+                Ni najdenih članov za izbran filter.
+              </li>
+            )}
           </ul>
         </CardContent>
       </Card>
-
-      <Dialog open={!!matchDialog} onOpenChange={(o) => !o && setMatchDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("matchPersonTitle")}</DialogTitle>
-            <DialogDescription>{t("matchPersonBody")}</DialogDescription>
-          </DialogHeader>
-          <ul className="divide-y">
-            {matchDialog?.candidates.map((c) => (
-              <li key={c.id} className="py-3 flex items-start justify-between gap-3">
-                <div className="text-sm space-y-1 min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{c.full_name}</span>
-                    <Badge variant="outline" className="text-[10px]">
-                      {c.match_type === "email" ? t("matchByEmail") : t("matchByName")}
-                    </Badge>
-                    {c.active === false && (
-                      <Badge variant="destructive" className="text-[10px]">{t("inactive")}</Badge>
-                    )}
-                    {(c.roles ?? []).map((r: string) => (
-                      <Badge key={r} variant="secondary" className="text-[10px]">
-                        {t((r === "admin" ? "adminRole" : r) as any)}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {c.email ?? "—"}{c.phone ? ` · ${c.phone}` : ""}
-                  </div>
-                  {c.notes && (
-                    <div className="text-xs text-muted-foreground">
-                      <span className="font-medium">{t("notesLabel")}:</span>{" "}
-                      <span className="line-clamp-2">{c.notes}</span>
-                    </div>
-                  )}
-                </div>
-                <Button size="sm" onClick={async () => {
-                  const uid = matchDialog!.userId;
-                  setMatchDialog(null);
-                  await syncPersonForApproved(uid, { linkTo: c.id });
-                  loadAll();
-                }}>{t("linkToThisPerson")}</Button>
-              </li>
-            ))}
-          </ul>
-          <DialogFooter>
-            <Button variant="outline" onClick={async () => {
-              const uid = matchDialog!.userId;
-              setMatchDialog(null);
-              await syncPersonForApproved(uid, { forceCreate: true });
-              loadAll();
-            }}>{t("createNewPerson")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

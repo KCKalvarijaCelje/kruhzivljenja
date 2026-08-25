@@ -64,11 +64,11 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
 
     const limit = Math.min(Math.max(data.limit ?? 200, 1), 500)
 
-    // Pull driver notification log + joined stop/date/driver/location
+    // Pull driver notification log + joined stop/date/location
     let q = admin
       .from('driver_notification_log')
       .select(
-        'id, status, notification_type, recipient_email, error_message, message_id, sent_at, created_at, driver_person_id, schedule_stop_id, driver:people!driver_notification_log_driver_person_id_fkey(id, full_name, email), stop:schedule_stops(id, location:locations(name), schedule_date:schedule_dates(date))',
+        'id, status, notification_type, recipient_email, error_message, message_id, sent_at, created_at, driver_person_id, schedule_stop_id, stop:schedule_stops(id, location:locations(name), schedule_date:schedule_dates(date))',
       )
       .order('created_at', { ascending: false })
       .limit(limit)
@@ -81,6 +81,19 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
     const { data: rows, error } = await q
     if (error) throw new Error(error.message)
 
+    // Pull driver people in batch if any
+    const driverIds = Array.from(new Set((rows ?? []).map((r: any) => r.driver_person_id).filter(Boolean)))
+    const driversMap = new Map<string, any>()
+    if (driverIds.length > 0) {
+      const { data: peopleList } = await admin
+        .from('people')
+        .select('id, full_name, email')
+        .in('id', driverIds)
+      for (const p of peopleList ?? []) {
+        driversMap.set(p.id, p)
+      }
+    }
+
     // Correlate with latest email_send_log status by message_id
     const ids = (rows ?? []).map((r: any) => r.message_id).filter(Boolean)
     let sendLogByMsg = new Map<string, any>()
@@ -91,7 +104,6 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
         .in('message_id', ids)
         .order('created_at', { ascending: false })
       for (const l of logs ?? []) {
-        // Prefer terminal delivery events over earlier 'sent' / 'pending' rows.
         const existing = sendLogByMsg.get(l.message_id)
         const isTerminal = (s: string) =>
           s === 'delivered' || s === 'bounced' || s === 'complained' || s === 'suppressed' || s === 'dlq'
@@ -102,12 +114,13 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
 
     const merged = (rows ?? []).map((r: any) => {
       const sl = r.message_id ? sendLogByMsg.get(r.message_id) : null
+      const driver = r.driver_person_id ? driversMap.get(r.driver_person_id) : null
       const finalStatus = sl?.status ?? r.status
       return {
         id: r.id,
         notification_type: r.notification_type,
         recipient_email: r.recipient_email,
-        driver_name: r.driver?.full_name ?? null,
+        driver_name: driver?.full_name ?? null,
         location_name: r.stop?.location?.name ?? null,
         scheduled_date: r.stop?.schedule_date?.date ?? null,
         created_at: r.created_at,

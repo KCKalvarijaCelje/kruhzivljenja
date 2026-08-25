@@ -4,7 +4,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/use-auth";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import { Loader2, LayoutDashboard } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Loader2, LayoutDashboard, ChevronDown, ChevronUp, Mail, Lock, LogIn } from "lucide-react";
 import logoUrl from "@/assets/logo.png";
 import { toast } from "sonner";
 
@@ -17,6 +19,10 @@ function LoginPage() {
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [showEmailForm, setShowEmailForm] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
 
   useEffect(() => {
     if (!loading && user) navigate({ to: "/planner" });
@@ -36,11 +42,36 @@ function LoginPage() {
     }
   };
 
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setEmailBusy(true);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
+      });
+
+      if (error) {
+        toast.error(error.message || (lang === "sl" ? "Napačno geslo ali e-pošta." : "Invalid credentials"));
+        setEmailBusy(false);
+        return;
+      }
+
+      toast.success(lang === "sl" ? "Uspešna prijava!" : "Signed in successfully!");
+      navigate({ to: "/planner" });
+    } catch (err: any) {
+      toast.error(err?.message || "Sign in error");
+      setEmailBusy(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-background to-secondary px-4">
       <div className="absolute top-4 right-4 flex gap-1 text-xs">
-        <button onClick={() => setLang("sl")} className={`px-2 py-1 rounded ${lang === "sl" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>SL</button>
-        <button onClick={() => setLang("en")} className={`px-2 py-1 rounded ${lang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>EN</button>
+        <button onClick={() => setLang("sl")} className={`px-2 py-1 rounded ${lang === "sl" ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground"}`}>SL</button>
+        <button onClick={() => setLang("en")} className={`px-2 py-1 rounded ${lang === "en" ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground"}`}>EN</button>
       </div>
       <div className="w-full max-w-md text-center">
         <div className="mx-auto h-24 w-24 rounded-2xl bg-card ring-1 ring-border flex items-center justify-center shadow-lg overflow-hidden">
@@ -48,14 +79,80 @@ function LoginPage() {
         </div>
         <h1 className="mt-6 text-4xl font-bold tracking-tight">{t("appName")}</h1>
         <p className="mt-2 text-muted-foreground">{t("tagline")}</p>
-        <div className="mt-10 bg-card border rounded-2xl p-6 shadow-sm space-y-3">
-          <Button onClick={handleGoogle} disabled={busy} size="lg" className="w-full">
+        
+        <div className="mt-10 bg-card border rounded-2xl p-6 shadow-sm space-y-4">
+          {/* 1. PRIMARY BASE OPTION: Google 1-Click Sign in */}
+          <Button onClick={handleGoogle} disabled={busy} size="lg" className="w-full font-bold shadow-sm">
             {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <GoogleIcon />}
-            {busy ? t("signingIn") : t("signInGoogle")}
+            {busy ? t("signingIn") : (lang === "sl" ? "Nadaljuj z Google računom (Gmail)" : t("signInGoogle"))}
           </Button>
-          <Button asChild variant="ghost" size="sm" className="w-full">
-            <Link to="/dashboard"><LayoutDashboard className="h-4 w-4 mr-2" />{t("dashboard")}</Link>
-          </Button>
+
+          {/* 2. SECONDARY OPTION: Collapsible Dropdown for Email Sign In */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowEmailForm(!showEmailForm)}
+              className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground py-1.5 transition-colors cursor-pointer"
+            >
+              <span>
+                {lang === "sl" ? "Ali pa se prijavi z e-pošto in geslom" : "Or sign in with email and password"}
+              </span>
+              {showEmailForm ? (
+                <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+            </button>
+
+            {showEmailForm && (
+              <form onSubmit={handleEmailSignIn} className="mt-3 p-4 bg-secondary/50 rounded-xl border space-y-3 text-left animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {lang === "sl" ? "E-poštni naslov" : "Email Address"}
+                  </Label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                    <Input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="ime@domena.si"
+                      className="pl-9 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {lang === "sl" ? "Geslo" : "Password"}
+                  </Label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                    <Input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="pl-9 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <Button type="submit" disabled={emailBusy} className="w-full text-xs font-bold" size="sm">
+                  {emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <LogIn className="w-3.5 h-3.5 mr-2" />}
+                  <span>{emailBusy ? (lang === "sl" ? "Preverjanje..." : "Checking...") : (lang === "sl" ? "Prijava z e-pošto" : "Sign in with Email")}</span>
+                </Button>
+              </form>
+            )}
+          </div>
+
+          <div className="pt-2 border-t">
+            <Button asChild variant="ghost" size="sm" className="w-full">
+              <Link to="/dashboard"><LayoutDashboard className="h-4 w-4 mr-2" />{t("dashboard")}</Link>
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -69,3 +166,4 @@ function GoogleIcon() {
     </svg>
   );
 }
+

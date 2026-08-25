@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { ArrowLeft, ChevronLeft, ChevronRight, Trash2, Plus, Loader2, MapPin, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { StopMessages } from "@/components/stop-messages";
+import { LocationLogo } from "@/components/location-logo";
 
 export const Route = createFileRoute("/_authenticated/planner/$id")({
   component: DateDetail,
@@ -79,10 +80,20 @@ function DateDetail() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!user) return;
-    supabase.from("people").select("id").eq("profile_id", user.id).maybeSingle().then(({ data }) => {
-      setMyPersonId((data as any)?.id ?? null);
-    });
+    if (!user) {
+      setMyPersonId(null);
+      return;
+    }
+    const userEmail = user.email?.trim() || "";
+    supabase
+      .from("people")
+      .select("id")
+      .or(`profile_id.eq.${user.id},email.ilike.${userEmail}`)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setMyPersonId((data as any)?.id ?? null);
+      });
   }, [user]);
 
 
@@ -347,8 +358,8 @@ function DateDetail() {
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between gap-2 flex-wrap">
                 <span className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4" />
-                  {stop.locations?.name ?? t("unassigned")}
+                  <LocationLogo name={stop.locations?.name} size="md" />
+                  <span className="font-bold text-slate-900">{stop.locations?.name ?? t("unassigned")}</span>
                   {stop.rule_stop_id === null && (
                     <Badge variant="outline" className="text-xs">{t("oneOffEntry")}</Badge>
                   )}

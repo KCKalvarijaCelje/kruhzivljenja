@@ -23,7 +23,7 @@ const dict = {
   people: { sl: "Osebe", en: "People" },
   recipients: { sl: "Prejemnikov", en: "Recipients" },
   templates: { sl: "Predloge", en: "Templates" },
-  admin: { sl: "Administracija", en: "Admin" },
+  admin: { sl: "Admin", en: "Admin" },
   recurringTemplates: { sl: "Ponavljajoče predloge", en: "Recurring templates" },
   applyToFuture: { sl: "Uporabi za prihodnje termine", en: "Apply to future dates" },
   appliedToFuture: { sl: "Predloga uporabljena", en: "Template applied" },
@@ -50,7 +50,7 @@ const dict = {
   coordinator: { sl: "Razdeljevalec", en: "Distributor" },
   recipient: { sl: "Prejemnik", en: "Recipient" },
   volunteer: { sl: "Prostovoljec", en: "Volunteer" },
-  adminRole: { sl: "Administrator", en: "Admin" },
+  adminRole: { sl: "Admin", en: "Admin" },
 
   // Dashboard
   upcomingDates: { sl: "Prihajajoči termini", en: "Upcoming dates" },
@@ -152,15 +152,21 @@ const dict = {
   recipientActive: { sl: "Prejemnik aktiven", en: "Recipient active" },
 
   // Delete
-  deleteEntry: { sl: "Izbriši vnos", en: "Delete entry" },
-  confirmDelete: { sl: "Potrdi izbris", en: "Confirm deletion" },
-  deleteWarning: { sl: "Ali ste prepričani, da želite to izbrisati? Tega dejanja ni mogoče razveljaviti.", en: "Are you sure you want to delete this? This action cannot be undone." },
-  archiveInsteadWarning: { sl: "Ta vnos je uporabljen v načrtovalniku ali zgodovini. Namesto trajnega izbrisa bo arhiviran (skrit z aktivnih seznamov), zgodovinski zapisi pa ohranjeni.", en: "This entry is used in the planner or historical records. Instead of permanent deletion, it will be archived (hidden from active lists) while preserving history." },
-  permanentDeleteWarning: { sl: "Ta vnos ni nikjer uporabljen in bo trajno izbrisan.", en: "This entry is not used anywhere and will be permanently deleted." },
-  archive: { sl: "Arhiviraj", en: "Archive" },
-  deletePermanently: { sl: "Trajno izbriši", en: "Delete permanently" },
-  deleted: { sl: "Izbrisano", en: "Deleted" },
-  archived: { sl: "Arhivirano", en: "Archived" },
+  deleteEntry: { sl: "Odstrani osebo", en: "Remove person" },
+  confirmDelete: { sl: "Odstrani iz Kruh Življenja", en: "Remove from Kruh Življenja" },
+  deleteWarning: { sl: "Ali ste prepričani, da želite to osebo odstraniti iz aplikacije Kruh Življenja?", en: "Are you sure you want to remove this person from Kruh Življenja?" },
+  archiveInsteadWarning: {
+    sl: "Ta oseba je zabeležena v načrtovalniku ali zgodovini. Skrita bo z aktivnih seznamov v Kruh Življenja, zgodovina pa ostane ohranjena. Profil v cerkveni bazi ostane povsem nespremenjen.",
+    en: "This entry is used in the planner or history. It will be hidden from active lists in Kruh Življenja while preserving history. Their church profile remains untouched.",
+  },
+  permanentDeleteWarning: {
+    sl: "Ta oseba bo odstranjena samo iz aplikacije Kruh Življenja. Njen profil v bazi cerkve ostane povsem nespremenjen in varen.",
+    en: "This person will only be removed from Kruh Življenja. Their profile in the church database remains completely untouched and safe.",
+  },
+  archive: { sl: "Arhiviraj v aplikaciji", en: "Archive in app" },
+  deletePermanently: { sl: "Odstrani iz aplikacije", en: "Remove from app" },
+  deleted: { sl: "Odstranjeno iz aplikacije", en: "Removed from app" },
+  archived: { sl: "Arhivirano v aplikaciji", en: "Archived in app" },
   checkingUsage: { sl: "Preverjam uporabo…", en: "Checking usage…" },
 
   // Admin
@@ -191,6 +197,17 @@ const dict = {
   weekly: { sl: "Tedensko", en: "Weekly" },
   biweekly: { sl: "Vsakih 14 dni", en: "Bi-weekly" },
   startYear: { sl: "Začetno leto (sept.)", en: "Start year (Sep)" },
+
+  // Admin tabs & labels
+  activeTeam: { sl: "Aktivna ekipa", en: "Active team" },
+  driversTab: { sl: "Vozniki", en: "Drivers" },
+  coordinatorsTab: { sl: "Razdeljevalci", en: "Distributors" },
+  recipientsTab: { sl: "Prejemniki", en: "Recipients" },
+  rejectedTab: { sl: "Zavrnjeni", en: "Rejected" },
+  allMembersTab: { sl: "Vsi člani", en: "All members" },
+  inPeopleBadge: { sl: "v bazi oseb", en: "in People list" },
+  searchUsersPlaceholder: { sl: "Išči po imenu, e-pošti ali telefonu…", en: "Search by name, email or phone…" },
+  recipientStatusUpdated: { sl: "Status prejemnika posodobljen", en: "Recipient status updated" },
 
   // Misc
   loading: { sl: "Nalaganje…", en: "Loading…" },
@@ -229,7 +246,14 @@ const dict = {
   createNewPerson: { sl: "Ustvari novo osebo", en: "Create new person" },
   matchByEmail: { sl: "Ujemanje po e-pošti", en: "Email match" },
   matchByName: { sl: "Ujemanje po imenu", en: "Name match" },
-  
+  syncAllToPeople: { sl: "Sinhroniziraj vse v Osebe", en: "Sync all to People" },
+  syncAllSuccess: { sl: "Člani uspešno sinhronizirani v Osebe", en: "Members synced to People successfully" },
+  addToPeople: { sl: "Dodaj med osebe", en: "Add to People" },
+  alreadyInPeople: { sl: "Že med osebami", en: "Already in People" },
+  regenerateDates: { sl: "Osveži termine", en: "Refresh dates" },
+  datesGenerated: { sl: "Termini za leto uspešno ustvarjeni", en: "Schedule dates created successfully" },
+  roleUpdated: { sl: "Vloga posodobljena", en: "Role updated" },
+
 
   // Email queue admin
   emailQueue: { sl: "E-pošta", en: "Email queue" },

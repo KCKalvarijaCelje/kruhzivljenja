@@ -12,6 +12,7 @@ import { I18nProvider } from "@/lib/i18n";
 import { Toaster } from "@/components/ui/sonner";
 import { useEffect } from "react";
 import { registerPWA } from "@/lib/pwa";
+import { PwaInstallBanner } from "@/components/PwaInstallBanner";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -26,8 +27,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:description", content: "Načrtovanje prevzemov in razdeljevanja hrane / Food pickup and distribution planner" },
       { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/g9Wx1IBlv0O8UCVKRCU69xaSxT13/social-images/social-1778477580629-kruh_zivljenja_LOGO.webp" },
       { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/g9Wx1IBlv0O8UCVKRCU69xaSxT13/social-images/social-1778477580629-kruh_zivljenja_LOGO.webp" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { property: "og:type", content: "website" },
       { name: "theme-color", content: "#a06f3a" },
       { name: "mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
@@ -72,6 +71,7 @@ function RootComponent() {
       <I18nProvider>
         <AuthProvider>
           <Outlet />
+          <PwaInstallBanner />
           <Toaster richColors position="top-right" />
         </AuthProvider>
       </I18nProvider>

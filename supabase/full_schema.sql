@@ -1,23 +1,29 @@
 -- =============================================================================
--- KRUH ŽIVLJENJA (Bread of Life) - FULL CONSOLIDATED DATABASE SCHEMA & MIGRATIONS
--- Project ID: qgocuxupqanlvfxsazqp
+-- KRUH ŽIVLJENJA (Bread of Life) - FULL CONSOLIDATED DATABASE SCHEMA
+-- Target Database: KCK HUB (Shared Multi-App Church Database)
 --
--- This script contains all 38 migrations in chronological order, allowing you
--- to initialize or recreate the entire database in a single execution.
+-- Fully non-destructive, blends with existing "Nedelje" / KCK HUB tables,
+-- handles pre-existing enums, and uses cast-safe text/uuid matching.
 -- =============================================================================
 
 -- =============================================================================
--- 1. BASE TYPES, TABLES & SECURITY HELPERS
+-- 1. BASE TYPES, EXTENSIONS & SHARED DIRECTORY COMPATIBILITY
 -- =============================================================================
 
--- Roles enum
+-- 1.1 Safely create or extend app_role enum with Kruh Življenja roles
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'app_role') THEN
     CREATE TYPE public.app_role AS ENUM ('admin','driver','coordinator','recipient','volunteer');
+  ELSE
+    BEGIN ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'admin'; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'driver'; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'coordinator'; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'recipient'; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'volunteer'; EXCEPTION WHEN OTHERS THEN NULL; END;
   END IF;
 END $$;
 
--- Profiles (linked to auth users)
+-- 1.2 Profiles (Linked to auth users — shared across all church apps)
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name text,
@@ -25,17 +31,27 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   phone text,
   notes text,
   active boolean NOT NULL DEFAULT true,
-  approval_status text NOT NULL DEFAULT 'pending' CHECK (approval_status IN ('pending', 'approved', 'rejected')),
+  approval_status text NOT NULL DEFAULT 'pending',
   approved_at timestamptz,
   approved_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- People (directory of volunteers, drivers, recipients)
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS full_name text,
+  ADD COLUMN IF NOT EXISTS email text,
+  ADD COLUMN IF NOT EXISTS phone text,
+  ADD COLUMN IF NOT EXISTS notes text,
+  ADD COLUMN IF NOT EXISTS active boolean DEFAULT true,
+  ADD COLUMN IF NOT EXISTS approval_status text DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS approved_at timestamptz,
+  ADD COLUMN IF NOT EXISTS approved_by uuid;
+
+-- 1.3 People (Shared Church Directory of volunteers, drivers, coordinators)
 CREATE TABLE IF NOT EXISTS public.people (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  profile_id uuid,
   full_name text NOT NULL,
   first_name text,
   last_name text,
@@ -48,29 +64,43 @@ CREATE TABLE IF NOT EXISTS public.people (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.people
+  ADD COLUMN IF NOT EXISTS profile_id uuid,
+  ADD COLUMN IF NOT EXISTS first_name text,
+  ADD COLUMN IF NOT EXISTS last_name text,
+  ADD COLUMN IF NOT EXISTS phone text,
+  ADD COLUMN IF NOT EXISTS email text,
+  ADD COLUMN IF NOT EXISTS notes text,
+  ADD COLUMN IF NOT EXISTS active boolean DEFAULT true,
+  ADD COLUMN IF NOT EXISTS needs_name_review boolean DEFAULT false;
+
 CREATE UNIQUE INDEX IF NOT EXISTS people_profile_id_unique
   ON public.people(profile_id) WHERE profile_id IS NOT NULL;
 
--- User roles
+-- 1.4 User roles (Text/Enum agnostic)
 CREATE TABLE IF NOT EXISTS public.user_roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  role app_role NOT NULL,
+  user_id uuid NOT NULL,
+  role text NOT NULL,
   UNIQUE (user_id, role)
 );
 
--- People roles
+-- 1.5 People roles
 CREATE TABLE IF NOT EXISTS public.people_roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   person_id uuid NOT NULL REFERENCES public.people(id) ON DELETE CASCADE,
-  role app_role NOT NULL,
+  role text NOT NULL,
   UNIQUE (person_id, role)
 );
+
+-- =============================================================================
+-- 2. KRUH ŽIVLJENJA SPECIFIC TABLES
+-- =============================================================================
 
 -- Recipient households
 CREATE TABLE IF NOT EXISTS public.recipient_households (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  person_id uuid UNIQUE REFERENCES public.people(id) ON DELETE SET NULL,
+  person_id uuid REFERENCES public.people(id) ON DELETE SET NULL,
   name text NOT NULL,
   first_name text,
   last_name text,
@@ -84,6 +114,14 @@ CREATE TABLE IF NOT EXISTS public.recipient_households (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.recipient_households
+  ADD COLUMN IF NOT EXISTS person_id uuid,
+  ADD COLUMN IF NOT EXISTS first_name text,
+  ADD COLUMN IF NOT EXISTS last_name text,
+  ADD COLUMN IF NOT EXISTS contact_name text,
+  ADD COLUMN IF NOT EXISTS address text,
+  ADD COLUMN IF NOT EXISTS needs_name_review boolean DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_recipient_households_person ON public.recipient_households(person_id);
 
@@ -211,7 +249,7 @@ CREATE INDEX IF NOT EXISTS idx_ppla_person ON public.person_profile_link_audit(p
 CREATE TABLE IF NOT EXISTS public.stop_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   schedule_stop_id uuid NOT NULL REFERENCES public.schedule_stops(id) ON DELETE CASCADE,
-  author_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  author_id uuid,
   author_name text NOT NULL,
   body text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 2000),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -221,23 +259,8 @@ CREATE TABLE IF NOT EXISTS public.stop_messages (
 CREATE INDEX IF NOT EXISTS stop_messages_stop_created_idx ON public.stop_messages (schedule_stop_id, created_at DESC);
 
 -- =============================================================================
--- 2. EMAIL INFRASTRUCTURE & SETTINGS
+-- 3. EMAIL SYSTEM TABLES
 -- =============================================================================
-
-CREATE EXTENSION IF NOT EXISTS pg_net SCHEMA extensions;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    CREATE EXTENSION pg_cron;
-  END IF;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
-CREATE EXTENSION IF NOT EXISTS supabase_vault;
-CREATE EXTENSION IF NOT EXISTS pgmq;
-
-DO $$ BEGIN PERFORM pgmq.create('auth_emails'); EXCEPTION WHEN OTHERS THEN NULL; END $$;
-DO $$ BEGIN PERFORM pgmq.create('transactional_emails'); EXCEPTION WHEN OTHERS THEN NULL; END $$;
-DO $$ BEGIN PERFORM pgmq.create('auth_emails_dlq'); EXCEPTION WHEN OTHERS THEN NULL; END $$;
-DO $$ BEGIN PERFORM pgmq.create('transactional_emails_dlq'); EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS public.email_send_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -246,7 +269,7 @@ CREATE TABLE IF NOT EXISTS public.email_send_log (
   provider_response JSONB,
   template_name TEXT NOT NULL,
   recipient_email TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'suppressed', 'failed', 'bounced', 'complained', 'dlq')),
+  status TEXT NOT NULL,
   error_message TEXT,
   metadata JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -254,9 +277,6 @@ CREATE TABLE IF NOT EXISTS public.email_send_log (
 
 CREATE INDEX IF NOT EXISTS idx_email_send_log_created ON public.email_send_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_email_send_log_recipient ON public.email_send_log(recipient_email);
-CREATE INDEX IF NOT EXISTS idx_email_send_log_message ON public.email_send_log(message_id);
-CREATE INDEX IF NOT EXISTS idx_email_send_log_provider_message_id ON public.email_send_log(provider_message_id) WHERE provider_message_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_email_send_log_message_sent_unique ON public.email_send_log(message_id) WHERE status = 'sent';
 
 CREATE TABLE IF NOT EXISTS public.email_send_state (
   id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -273,12 +293,10 @@ INSERT INTO public.email_send_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS public.suppressed_emails (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL UNIQUE,
-  reason TEXT NOT NULL CHECK (reason IN ('unsubscribe', 'bounce', 'complaint')),
+  reason TEXT NOT NULL,
   metadata JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_suppressed_emails_email ON public.suppressed_emails(email);
 
 CREATE TABLE IF NOT EXISTS public.email_unsubscribe_tokens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -287,8 +305,6 @@ CREATE TABLE IF NOT EXISTS public.email_unsubscribe_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   used_at TIMESTAMPTZ
 );
-
-CREATE INDEX IF NOT EXISTS idx_unsubscribe_tokens_token ON public.email_unsubscribe_tokens(token);
 
 CREATE TABLE IF NOT EXISTS public.email_templates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -323,7 +339,7 @@ CREATE TABLE IF NOT EXISTS public.driver_notification_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   schedule_stop_id uuid NOT NULL REFERENCES public.schedule_stops(id) ON DELETE CASCADE,
   driver_person_id uuid NOT NULL REFERENCES public.people(id) ON DELETE CASCADE,
-  notification_type text NOT NULL CHECK (notification_type IN ('assignment','change','reminder')),
+  notification_type text NOT NULL,
   recipient_email text NOT NULL,
   status text NOT NULL DEFAULT 'queued',
   message_id text,
@@ -332,11 +348,8 @@ CREATE TABLE IF NOT EXISTS public.driver_notification_log (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_dnl_stop ON public.driver_notification_log(schedule_stop_id);
-CREATE INDEX IF NOT EXISTS idx_dnl_driver_type ON public.driver_notification_log(driver_person_id, notification_type);
-
 -- =============================================================================
--- 3. STORED FUNCTIONS & PROCEDURES
+-- 4. STORED FUNCTIONS (SAFE TEXT/UUID MATCHING)
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION public.touch_updated_at()
@@ -347,9 +360,12 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role app_role)
+CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role);
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_roles 
+    WHERE user_id::text = _user_id::text AND role::text = _role::text
+  );
 $$;
 
 CREATE OR REPLACE FUNCTION public.is_admin(_user_id uuid)
@@ -361,13 +377,13 @@ CREATE OR REPLACE FUNCTION public.is_approved(_user_id uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.profiles
-    WHERE id = _user_id AND approval_status = 'approved'
+    WHERE id::text = _user_id::text AND approval_status = 'approved'
   );
 $$;
 
 CREATE OR REPLACE FUNCTION public.my_person_id()
 RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT id FROM public.people WHERE profile_id = auth.uid() LIMIT 1;
+  SELECT id FROM public.people WHERE profile_id::text = auth.uid()::text LIMIT 1;
 $$;
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -375,7 +391,7 @@ RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   is_first boolean;
 BEGIN
-  SELECT count(*) = 0 INTO is_first FROM public.user_roles;
+  SELECT count(*) = 0 INTO is_first FROM public.user_roles WHERE role::text = 'admin';
 
   INSERT INTO public.profiles (id, full_name, email, approval_status, approved_at)
   VALUES (
@@ -385,7 +401,9 @@ BEGIN
     CASE WHEN is_first THEN 'approved' ELSE 'pending' END,
     CASE WHEN is_first THEN now() ELSE null END
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    full_name = COALESCE(public.profiles.full_name, EXCLUDED.full_name);
 
   IF is_first THEN
     INSERT INTO public.user_roles(user_id, role) VALUES (NEW.id, 'admin')
@@ -614,10 +632,10 @@ DECLARE
 BEGIN
   IF NOT is_admin(actor) THEN RAISE EXCEPTION 'not authorized'; END IF;
 
-  SELECT id, full_name, email INTO prof FROM public.profiles WHERE id = _profile_id;
+  SELECT id, full_name, email INTO prof FROM public.profiles WHERE id::text = _profile_id::text;
   IF NOT FOUND THEN RAISE EXCEPTION 'profile not found'; END IF;
 
-  SELECT * INTO existing_person FROM public.people WHERE profile_id = _profile_id LIMIT 1;
+  SELECT * INTO existing_person FROM public.people WHERE profile_id::text = _profile_id::text LIMIT 1;
   IF FOUND THEN
     target_person_id := existing_person.id;
   ELSIF _link_to_person_id IS NOT NULL THEN
@@ -705,8 +723,8 @@ BEGIN
     END IF;
   END IF;
 
-  SELECT EXISTS(SELECT 1 FROM public.user_roles WHERE user_id = _profile_id AND role = 'driver') INTO has_driver;
-  SELECT EXISTS(SELECT 1 FROM public.user_roles WHERE user_id = _profile_id AND role = 'coordinator') INTO has_coord;
+  SELECT EXISTS(SELECT 1 FROM public.user_roles WHERE user_id::text = _profile_id::text AND role::text = 'driver') INTO has_driver;
+  SELECT EXISTS(SELECT 1 FROM public.user_roles WHERE user_id::text = _profile_id::text AND role::text = 'coordinator') INTO has_coord;
 
   IF has_driver THEN
     INSERT INTO public.people_roles(person_id, role) VALUES (target_person_id, 'driver')
@@ -721,25 +739,25 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.sync_person_role(_profile_id uuid, _role app_role, _enabled boolean)
+CREATE OR REPLACE FUNCTION public.sync_person_role(_profile_id uuid, _role text, _enabled boolean)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   pid uuid;
   actor uuid := auth.uid();
 BEGIN
   IF NOT is_admin(actor) THEN RAISE EXCEPTION 'not authorized'; END IF;
-  IF _role NOT IN ('driver', 'coordinator') THEN RETURN; END IF;
-  SELECT id INTO pid FROM public.people WHERE profile_id = _profile_id;
+  IF _role::text NOT IN ('driver', 'coordinator') THEN RETURN; END IF;
+  SELECT id INTO pid FROM public.people WHERE profile_id::text = _profile_id::text;
   IF pid IS NULL THEN RETURN; END IF;
   IF _enabled THEN
     INSERT INTO public.people_roles(person_id, role) VALUES (pid, _role)
     ON CONFLICT (person_id, role) DO NOTHING;
     INSERT INTO public.person_profile_link_audit(person_id, profile_id, action, role, actor_id)
-    VALUES (pid, _profile_id, 'role_added', _role::text, actor);
+    VALUES (pid, _profile_id, 'role_added', _role, actor);
   ELSE
-    DELETE FROM public.people_roles WHERE person_id = pid AND role = _role;
+    DELETE FROM public.people_roles WHERE person_id = pid AND role::text = _role;
     INSERT INTO public.person_profile_link_audit(person_id, profile_id, action, role, actor_id)
-    VALUES (pid, _profile_id, 'role_removed', _role::text, actor);
+    VALUES (pid, _profile_id, 'role_removed', _role, actor);
   END IF;
 END;
 $$;
@@ -752,7 +770,7 @@ DECLARE
   is_assigned boolean;
 BEGIN
   IF me IS NULL OR public.is_admin(me) THEN RETURN NEW; END IF;
-  SELECT id INTO my_pid FROM public.people WHERE profile_id = me LIMIT 1;
+  SELECT id INTO my_pid FROM public.people WHERE profile_id::text = me::text LIMIT 1;
   is_assigned := my_pid IS NOT NULL
                  AND (OLD.driver_id = my_pid OR OLD.coordinator_id = my_pid);
 
@@ -797,99 +815,8 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.admin_get_cron_status()
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, cron AS $$
-DECLARE
-  result jsonb;
-BEGIN
-  IF NOT is_admin(auth.uid()) THEN RAISE EXCEPTION 'not authorized'; END IF;
-  SELECT jsonb_build_object(
-    'jobs', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-        'jobid', j.jobid,
-        'jobname', j.jobname,
-        'schedule', j.schedule,
-        'active', j.active
-      ) ORDER BY j.jobname)
-      FROM cron.job j
-      WHERE j.jobname IN ('driver-reminders-daily','process-email-queue')
-    ), '[]'::jsonb),
-    'runs', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-        'jobid', r.jobid,
-        'jobname', j.jobname,
-        'status', r.status,
-        'return_message', r.return_message,
-        'start_time', r.start_time,
-        'end_time', r.end_time
-      ) ORDER BY r.start_time DESC)
-      FROM cron.job_run_details r
-      JOIN cron.job j ON j.jobid = r.jobid
-      WHERE j.jobname IN ('driver-reminders-daily','process-email-queue')
-        AND r.start_time > now() - interval '7 days'
-      LIMIT 50
-    ), '[]'::jsonb)
-  ) INTO result;
-  RETURN result;
-END;
-$$;
-
--- Email Queue RPC wrappers
-CREATE OR REPLACE FUNCTION public.enqueue_email(queue_name TEXT, payload JSONB)
-RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pgmq AS $$
-BEGIN
-  RETURN pgmq.send(queue_name, payload);
-EXCEPTION WHEN undefined_table THEN
-  PERFORM pgmq.create(queue_name);
-  RETURN pgmq.send(queue_name, payload);
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.read_email_batch(queue_name TEXT, batch_size INT, vt INT)
-RETURNS TABLE(msg_id BIGINT, read_ct INT, message JSONB)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pgmq AS $$
-BEGIN
-  RETURN QUERY SELECT r.msg_id, r.read_ct, r.message FROM pgmq.read(queue_name, vt, batch_size) r;
-EXCEPTION WHEN undefined_table THEN
-  PERFORM pgmq.create(queue_name);
-  RETURN;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.delete_email(queue_name TEXT, message_id BIGINT)
-RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pgmq AS $$
-BEGIN
-  RETURN pgmq.delete(queue_name, message_id);
-EXCEPTION WHEN undefined_table THEN
-  RETURN FALSE;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.move_to_dlq(
-  source_queue TEXT, dlq_name TEXT, message_id BIGINT, payload JSONB
-)
-RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pgmq AS $$
-DECLARE new_id BIGINT;
-BEGIN
-  SELECT pgmq.send(dlq_name, payload) INTO new_id;
-  PERFORM pgmq.delete(source_queue, message_id);
-  RETURN new_id;
-EXCEPTION WHEN undefined_table THEN
-  BEGIN
-    PERFORM pgmq.create(dlq_name);
-  EXCEPTION WHEN OTHERS THEN NULL;
-  END;
-  SELECT pgmq.send(dlq_name, payload) INTO new_id;
-  BEGIN
-    PERFORM pgmq.delete(source_queue, message_id);
-  EXCEPTION WHEN undefined_table THEN NULL;
-  END;
-  RETURN new_id;
-END;
-$$;
-
 -- =============================================================================
--- 4. TRIGGERS
+-- 5. TRIGGERS
 -- =============================================================================
 
 DROP TRIGGER IF EXISTS trg_profiles_updated ON public.profiles;
@@ -937,7 +864,7 @@ CREATE TRIGGER enforce_stop_self_assign_trg BEFORE UPDATE ON public.schedule_sto
 FOR EACH ROW EXECUTE FUNCTION public.enforce_stop_self_assign();
 
 -- =============================================================================
--- 5. ROW LEVEL SECURITY (RLS) POLICIES
+-- 6. ROW LEVEL SECURITY (RLS) POLICIES
 -- =============================================================================
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -966,121 +893,167 @@ ALTER TABLE public.driver_notification_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stop_messages ENABLE ROW LEVEL SECURITY;
 
 -- Profiles
+DROP POLICY IF EXISTS "profiles_read" ON public.profiles;
 CREATE POLICY "profiles_read" ON public.profiles FOR SELECT TO authenticated
-  USING (auth.uid() = id OR is_approved(auth.uid()) OR is_admin(auth.uid()));
+  USING (auth.uid()::text = id::text OR is_approved(auth.uid()) OR is_admin(auth.uid()));
+
+DROP POLICY IF EXISTS "profiles_self_update" ON public.profiles;
 CREATE POLICY "profiles_self_update" ON public.profiles FOR UPDATE TO authenticated
-  USING (auth.uid() = id)
+  USING (auth.uid()::text = id::text)
   WITH CHECK (
-    auth.uid() = id
-    AND approval_status = (SELECT approval_status FROM public.profiles WHERE id = auth.uid())
-    AND approved_at IS NOT DISTINCT FROM (SELECT approved_at FROM public.profiles WHERE id = auth.uid())
-    AND approved_by IS NOT DISTINCT FROM (SELECT approved_by FROM public.profiles WHERE id = auth.uid())
+    auth.uid()::text = id::text
+    AND approval_status = (SELECT approval_status FROM public.profiles WHERE id::text = auth.uid()::text)
+    AND approved_at IS NOT DISTINCT FROM (SELECT approved_at FROM public.profiles WHERE id::text = auth.uid()::text)
+    AND approved_by IS NOT DISTINCT FROM (SELECT approved_by FROM public.profiles WHERE id::text = auth.uid()::text)
   );
+
+DROP POLICY IF EXISTS "profiles_admin_all" ON public.profiles;
 CREATE POLICY "profiles_admin_all" ON public.profiles FOR ALL TO authenticated
   USING (public.is_admin(auth.uid())) WITH CHECK (public.is_admin(auth.uid()));
 
 -- People & Roles
+DROP POLICY IF EXISTS "people_read" ON public.people;
 CREATE POLICY "people_read" ON public.people FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "people_admin_write" ON public.people;
 CREATE POLICY "people_admin_write" ON public.people FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "user_roles_read" ON public.user_roles;
 CREATE POLICY "user_roles_read" ON public.user_roles FOR SELECT TO authenticated
-  USING (auth.uid() = user_id OR is_approved(auth.uid()) OR is_admin(auth.uid()));
+  USING (auth.uid()::text = user_id::text OR is_approved(auth.uid()) OR is_admin(auth.uid()));
+
+DROP POLICY IF EXISTS "user_roles_admin_write" ON public.user_roles;
 CREATE POLICY "user_roles_admin_write" ON public.user_roles FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "people_roles_read" ON public.people_roles;
 CREATE POLICY "people_roles_read" ON public.people_roles FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "people_roles_admin_write" ON public.people_roles;
 CREATE POLICY "people_roles_admin_write" ON public.people_roles FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
 -- Households
+DROP POLICY IF EXISTS "households_read" ON public.recipient_households;
 CREATE POLICY "households_read" ON public.recipient_households FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "households_admin_write" ON public.recipient_households;
 CREATE POLICY "households_admin_write" ON public.recipient_households FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "members_read" ON public.household_members;
 CREATE POLICY "members_read" ON public.household_members FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "members_admin_write" ON public.household_members;
 CREATE POLICY "members_admin_write" ON public.household_members FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "dph_read" ON public.driver_pickup_households;
 CREATE POLICY "dph_read" ON public.driver_pickup_households FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "dph_admin_write" ON public.driver_pickup_households;
 CREATE POLICY "dph_admin_write" ON public.driver_pickup_households FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
 -- Schedule structure
+DROP POLICY IF EXISTS "years_read" ON public.ministry_years;
 CREATE POLICY "years_read" ON public.ministry_years FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "years_admin_write" ON public.ministry_years;
 CREATE POLICY "years_admin_write" ON public.ministry_years FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "locations_read" ON public.locations;
 CREATE POLICY "locations_read" ON public.locations FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "locations_admin_write" ON public.locations;
 CREATE POLICY "locations_admin_write" ON public.locations FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "rules_read" ON public.recurring_schedule_rules;
 CREATE POLICY "rules_read" ON public.recurring_schedule_rules FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "rules_admin_write" ON public.recurring_schedule_rules;
 CREATE POLICY "rules_admin_write" ON public.recurring_schedule_rules FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "rule_stops_read" ON public.recurring_schedule_rule_stops;
 CREATE POLICY "rule_stops_read" ON public.recurring_schedule_rule_stops FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "rule_stops_admin_write" ON public.recurring_schedule_rule_stops;
 CREATE POLICY "rule_stops_admin_write" ON public.recurring_schedule_rule_stops FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "templates_read" ON public.recurring_recipient_templates;
 CREATE POLICY "templates_read" ON public.recurring_recipient_templates FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "templates_admin_write" ON public.recurring_recipient_templates;
 CREATE POLICY "templates_admin_write" ON public.recurring_recipient_templates FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
 -- Schedule Dates & Stops
+DROP POLICY IF EXISTS "schedule_read" ON public.schedule_dates;
 CREATE POLICY "schedule_read" ON public.schedule_dates FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "schedule_admin_write" ON public.schedule_dates;
 CREATE POLICY "schedule_admin_write" ON public.schedule_dates FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "stops_read" ON public.schedule_stops;
 CREATE POLICY "stops_read" ON public.schedule_stops FOR SELECT TO authenticated
   USING (is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "stops_admin_write" ON public.schedule_stops;
 CREATE POLICY "stops_admin_write" ON public.schedule_stops FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "stops_self_assign" ON public.schedule_stops;
 CREATE POLICY "stops_self_assign" ON public.schedule_stops FOR UPDATE TO authenticated
   USING (
     public.is_approved(auth.uid())
     AND public.my_person_id() IS NOT NULL
     AND (
-      (public.has_role(auth.uid(), 'driver'::public.app_role) AND driver_id IS NULL)
+      (public.has_role(auth.uid(), 'driver') AND driver_id IS NULL)
       OR
-      (public.has_role(auth.uid(), 'coordinator'::public.app_role) AND coordinator_id IS NULL)
+      (public.has_role(auth.uid(), 'coordinator') AND coordinator_id IS NULL)
     )
   )
   WITH CHECK (
     public.is_approved(auth.uid())
     AND public.my_person_id() IS NOT NULL
     AND (
-      (public.has_role(auth.uid(), 'driver'::public.app_role) AND driver_id = public.my_person_id())
+      (public.has_role(auth.uid(), 'driver') AND driver_id = public.my_person_id())
       OR
-      (public.has_role(auth.uid(), 'coordinator'::public.app_role) AND coordinator_id = public.my_person_id())
+      (public.has_role(auth.uid(), 'coordinator') AND coordinator_id = public.my_person_id())
     )
   );
 
+DROP POLICY IF EXISTS "stops_complete_assigned" ON public.schedule_stops;
 CREATE POLICY "stops_complete_assigned" ON public.schedule_stops FOR UPDATE TO authenticated
   USING (
     is_approved(auth.uid())
@@ -1093,19 +1066,24 @@ CREATE POLICY "stops_complete_assigned" ON public.schedule_stops FOR UPDATE TO a
     AND (driver_id = my_person_id() OR coordinator_id = my_person_id())
   );
 
+DROP POLICY IF EXISTS "date_recipients_read" ON public.date_recipients;
 CREATE POLICY "date_recipients_read" ON public.date_recipients FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "date_recipients_admin_write" ON public.date_recipients;
 CREATE POLICY "date_recipients_admin_write" ON public.date_recipients FOR ALL TO authenticated
   USING (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()))
   WITH CHECK (public.is_admin(auth.uid()) AND public.is_approved(auth.uid()));
 
 -- Messages & Audit
+DROP POLICY IF EXISTS "stop_messages_select_approved" ON public.stop_messages;
 CREATE POLICY "stop_messages_select_approved" ON public.stop_messages FOR SELECT TO authenticated
   USING (public.is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "stop_messages_insert_assigned_or_admin" ON public.stop_messages;
 CREATE POLICY "stop_messages_insert_assigned_or_admin" ON public.stop_messages FOR INSERT TO authenticated
   WITH CHECK (
-    author_id = auth.uid()
+    author_id::text = auth.uid()::text
     AND (
       public.is_admin(auth.uid())
       OR EXISTS (
@@ -1117,32 +1095,48 @@ CREATE POLICY "stop_messages_insert_assigned_or_admin" ON public.stop_messages F
     )
   );
 
+DROP POLICY IF EXISTS "stop_messages_delete_admin_or_author" ON public.stop_messages;
 CREATE POLICY "stop_messages_delete_admin_or_author" ON public.stop_messages FOR DELETE TO authenticated
-  USING (public.is_admin(auth.uid()) OR author_id = auth.uid());
+  USING (public.is_admin(auth.uid()) OR author_id::text = auth.uid()::text);
 
+DROP POLICY IF EXISTS "ppla_admin_read" ON public.person_profile_link_audit;
 CREATE POLICY "ppla_admin_read" ON public.person_profile_link_audit FOR SELECT TO authenticated
   USING (is_admin(auth.uid()));
 
 -- Email service policies
+DROP POLICY IF EXISTS "email_brand_admin_all" ON public.email_brand_settings;
 CREATE POLICY "email_brand_admin_all" ON public.email_brand_settings FOR ALL TO authenticated
   USING (is_admin(auth.uid()) AND is_approved(auth.uid()))
   WITH CHECK (is_admin(auth.uid()) AND is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "email_templates_admin_read" ON public.email_templates;
 CREATE POLICY "email_templates_admin_read" ON public.email_templates FOR SELECT TO authenticated
   USING (is_admin(auth.uid()) AND is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "email_templates_admin_write" ON public.email_templates;
 CREATE POLICY "email_templates_admin_write" ON public.email_templates FOR ALL TO authenticated
   USING (is_admin(auth.uid()) AND is_approved(auth.uid()))
   WITH CHECK (is_admin(auth.uid()) AND is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "dnl_admin_read" ON public.driver_notification_log;
 CREATE POLICY "dnl_admin_read" ON public.driver_notification_log FOR SELECT TO authenticated
   USING (is_admin(auth.uid()) AND is_approved(auth.uid()));
+
+DROP POLICY IF EXISTS "dnl_admin_write" ON public.driver_notification_log;
 CREATE POLICY "dnl_admin_write" ON public.driver_notification_log FOR ALL TO authenticated
   USING (is_admin(auth.uid()) AND is_approved(auth.uid()))
   WITH CHECK (is_admin(auth.uid()) AND is_approved(auth.uid()));
 
+DROP POLICY IF EXISTS "Service role can manage send log" ON public.email_send_log;
 CREATE POLICY "Service role can manage send log" ON public.email_send_log FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Service role can manage send state" ON public.email_send_state;
 CREATE POLICY "Service role can manage send state" ON public.email_send_state FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Service role can manage suppressed" ON public.suppressed_emails;
 CREATE POLICY "Service role can manage suppressed" ON public.suppressed_emails FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Service role can manage tokens" ON public.email_unsubscribe_tokens;
 CREATE POLICY "Service role can manage tokens" ON public.email_unsubscribe_tokens FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Permissions
@@ -1152,24 +1146,15 @@ REVOKE EXECUTE ON FUNCTION public.generate_ministry_year(integer) FROM PUBLIC, a
 REVOKE EXECUTE ON FUNCTION public.apply_template_to_future(uuid, date) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.apply_assignments_to_future(uuid, date, boolean) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.apply_person_to_future(uuid, date, text, uuid, boolean) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.enqueue_email(text, jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.read_email_batch(text, integer, integer) FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.delete_email(text, bigint) FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.move_to_dlq(text, text, bigint, jsonb) FROM PUBLIC, anon, authenticated;
 
-GRANT EXECUTE ON FUNCTION public.has_role(uuid, public.app_role) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.has_role(uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_admin(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_approved(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.my_person_id() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.generate_ministry_year(integer) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_get_cron_status() TO authenticated;
-GRANT EXECUTE ON FUNCTION public.enqueue_email(text, jsonb) TO service_role;
-GRANT EXECUTE ON FUNCTION public.read_email_batch(text, integer, integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.delete_email(text, bigint) TO service_role;
-GRANT EXECUTE ON FUNCTION public.move_to_dlq(text, text, bigint, jsonb) TO service_role;
 
 -- =============================================================================
--- 6. DEFAULT SEED DATA
+-- 7. DEFAULT SEED DATA
 -- =============================================================================
 
 INSERT INTO public.locations(name) VALUES ('Main'), ('Location A'), ('Location B')
