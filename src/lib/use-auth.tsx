@@ -7,6 +7,9 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "unknown";
 type AuthCtx = {
   user: User | null;
   session: Session | null;
+  profile: any;
+  fullName: string;
+  avatarUrl: string;
   loading: boolean;
   roles: string[];
   isAdmin: boolean;
@@ -19,6 +22,9 @@ type AuthCtx = {
 const Ctx = createContext<AuthCtx>({
   user: null,
   session: null,
+  profile: null,
+  fullName: "",
+  avatarUrl: "",
   loading: true,
   roles: [],
   isAdmin: false,
@@ -30,6 +36,9 @@ const Ctx = createContext<AuthCtx>({
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [fullName, setFullName] = useState<string>("");
+  const [avatarUrl, setAvatarUrl] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [roles, setRoles] = useState<string[]>([]);
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("unknown");
@@ -108,6 +117,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         status = "rejected";
       }
 
+      setProfile(prof || null);
+      const metaName = session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name || "";
+      const rawName = prof?.full_name || prof?.name || matchedPerson?.name || metaName || (emailToMatch ? emailToMatch.split("@")[0] : "");
+      setFullName(rawName);
+      setAvatarUrl(prof?.avatar_url || session?.user?.user_metadata?.avatar_url || session?.user?.user_metadata?.picture || "");
+
       setRoles(Array.from(collectedRoles));
       setApprovalStatus(isPrimaryAdmin ? "approved" : status);
     } catch (err) {
@@ -126,6 +141,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (s?.user) {
       await loadUserMeta(s.user.id, s.user.email);
     } else {
+      setProfile(null);
+      setFullName("");
+      setAvatarUrl("");
       setRoles([]);
       setApprovalStatus("unknown");
     }
@@ -198,6 +216,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user: session?.user ?? null,
         session,
+        profile,
+        fullName,
+        avatarUrl,
         loading,
         roles: isPrimaryAdmin && !roles.includes("admin") ? [...roles, "admin"] : roles,
         isAdmin: effectiveIsAdmin,

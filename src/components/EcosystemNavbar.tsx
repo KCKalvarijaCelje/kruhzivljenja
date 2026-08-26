@@ -253,7 +253,7 @@ export const EcosystemNavbar: React.FC<EcosystemNavbarProps> = ({
                   <div className="w-5 h-5 rounded-full bg-white text-[#93032E] font-black flex items-center justify-center text-[10px]">
                     {user.name ? user.name[0] : 'U'}
                   </div>
-                  <span className="hidden sm:inline max-w-[80px] truncate">{user.name.split(' ')[0]}</span>
+                  <span className="hidden sm:inline max-w-[160px] truncate">{user.name}</span>
                 </button>
 
                 {userDropdownOpen && (

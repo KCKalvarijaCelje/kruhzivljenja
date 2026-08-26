@@ -31,7 +31,7 @@ import { EcosystemAppsDropdown } from "@/components/EcosystemAppsDropdown";
 import { BrandLogo } from "@/components/BrandLogo";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { isAdmin, signOut, user } = useAuth();
+  const { isAdmin, signOut, user, fullName, avatarUrl } = useAuth();
   const { t, lang, setLang } = useI18n();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -108,12 +108,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     const emailLower = (email || '').toLowerCase().trim();
     let name = (rawName || '').trim();
 
-    if (
-      emailLower.includes('ales.lajlar') ||
-      emailLower.includes('aleslajlar') ||
-      emailLower.startsWith('ales') ||
-      name.toLowerCase().includes('ales')
-    ) {
+    if (emailLower === 'ales.lajlar@gmail.com' || emailLower === 'aleslajlar@gmail.com') {
       return 'Aleš Lajlar';
     }
 
@@ -121,7 +116,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       name = email.split('@')[0];
     }
 
-    if (!name) return 'Aleš Lajlar';
+    if (!name) return 'Uporabnik';
+
+    // If name is dot-separated like "kenzley.lajlar" or "whitney.lajlar", format to capitalized words
+    if (name.includes('.') && !name.includes(' ')) {
+      name = name.split('.').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+    }
 
     return name
       .replace(/\bAles\b/g, 'Aleš')
@@ -143,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const userFullName = formatSlovenianDisplayName(
-    user?.user_metadata?.full_name || user?.user_metadata?.name,
+    fullName || user?.user_metadata?.full_name || user?.user_metadata?.name,
     user?.email
   );
   const initial = (userFullName[0] || 'A').toUpperCase();
