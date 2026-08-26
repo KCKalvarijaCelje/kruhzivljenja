@@ -25,6 +25,14 @@ function LoginPage() {
   const [emailBusy, setEmailBusy] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const queryParams = new URLSearchParams(window.location.search);
+      const oauthError = hashParams.get("error_description") || queryParams.get("error_description") || hashParams.get("error") || queryParams.get("error");
+      if (oauthError) {
+        toast.error(`Prijava ni uspela: ${decodeURIComponent(oauthError.replace(/\+/g, " "))}`);
+      }
+    }
     if (!loading && user) navigate({ to: "/planner" });
   }, [user, loading, navigate]);
 

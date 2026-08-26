@@ -16,7 +16,7 @@ const SENDER_DOMAIN = 'notify.kruhzivljenja.kalvarija.si'
 const FROM_DOMAIN = 'kruhzivljenja.kalvarija.si'
 
 function getAdmin() {
-  const url = import.meta.env.VITE_SUPABASE_URL
+  const url = import.meta.env?.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw new Error('Server configuration error')
   return createClient(url, key)
@@ -64,11 +64,11 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
 
     const limit = Math.min(Math.max(data.limit ?? 200, 1), 500)
 
-    // Pull driver notification log + joined stop/date/location
+    // Pull driver notification log without embedded schema joins
     let q = admin
       .from('driver_notification_log')
       .select(
-        'id, status, notification_type, recipient_email, error_message, message_id, sent_at, created_at, driver_person_id, schedule_stop_id, stop:schedule_stops(id, location:locations(name), schedule_date:schedule_dates(date))',
+        'id, status, notification_type, recipient_email, error_message, message_id, sent_at, created_at, driver_person_id, schedule_stop_id'
       )
       .order('created_at', { ascending: false })
       .limit(limit)
@@ -79,18 +79,60 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
     if (data.toDate) q = q.lte('created_at', data.toDate)
 
     const { data: rows, error } = await q
-    if (error) throw new Error(error.message)
+    if (error) {
+      console.warn('[driver_notification_log query]', error)
+    }
 
     // Pull driver people in batch if any
     const driverIds = Array.from(new Set((rows ?? []).map((r: any) => r.driver_person_id).filter(Boolean)))
     const driversMap = new Map<string, any>()
     if (driverIds.length > 0) {
-      const { data: peopleList } = await admin
-        .from('people')
-        .select('id, full_name, email')
-        .in('id', driverIds)
-      for (const p of peopleList ?? []) {
-        driversMap.set(p.id, p)
+      try {
+        const { data: peopleList } = await admin
+          .from('people')
+          .select('id, full_name, email')
+          .in('id', driverIds)
+        for (const p of peopleList ?? []) {
+          driversMap.set(p.id, p)
+        }
+      } catch (err) {
+        console.warn('Could not batch load people:', err)
+      }
+    }
+
+    // Pull schedule stops in batch
+    const stopIds = Array.from(new Set((rows ?? []).map((r: any) => r.schedule_stop_id).filter(Boolean)))
+    const stopsMap = new Map<string, { locationName: string | null; scheduledDate: string | null }>()
+    if (stopIds.length > 0) {
+      try {
+        const { data: stopsList } = await admin
+          .from('schedule_stops')
+          .select('id, location_id, schedule_date_id')
+          .in('id', stopIds)
+
+        const locIds = Array.from(new Set((stopsList ?? []).map((s: any) => s.location_id).filter(Boolean)))
+        const dateIds = Array.from(new Set((stopsList ?? []).map((s: any) => s.schedule_date_id).filter(Boolean)))
+
+        const locMap = new Map<string, string>()
+        if (locIds.length > 0) {
+          const { data: locs } = await admin.from('locations').select('id, name').in('id', locIds)
+          for (const l of locs ?? []) locMap.set(l.id, l.name)
+        }
+
+        const dateMap = new Map<string, string>()
+        if (dateIds.length > 0) {
+          const { data: dates } = await admin.from('schedule_dates').select('id, date').in('id', dateIds)
+          for (const d of dates ?? []) dateMap.set(d.id, d.date)
+        }
+
+        for (const s of stopsList ?? []) {
+          stopsMap.set(s.id, {
+            locationName: s.location_id ? (locMap.get(s.location_id) ?? null) : null,
+            scheduledDate: s.schedule_date_id ? (dateMap.get(s.schedule_date_id) ?? null) : null,
+          })
+        }
+      } catch (err) {
+        console.warn('Could not batch load stops:', err)
       }
     }
 
@@ -98,31 +140,36 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
     const ids = (rows ?? []).map((r: any) => r.message_id).filter(Boolean)
     let sendLogByMsg = new Map<string, any>()
     if (ids.length) {
-      const { data: logs } = await admin
-        .from('email_send_log')
-        .select('message_id, status, error_message, created_at, provider_message_id, provider_response')
-        .in('message_id', ids)
-        .order('created_at', { ascending: false })
-      for (const l of logs ?? []) {
-        const existing = sendLogByMsg.get(l.message_id)
-        const isTerminal = (s: string) =>
-          s === 'delivered' || s === 'bounced' || s === 'complained' || s === 'suppressed' || s === 'dlq'
-        if (!existing) sendLogByMsg.set(l.message_id, l)
-        else if (isTerminal(l.status) && !isTerminal(existing.status)) sendLogByMsg.set(l.message_id, l)
+      try {
+        const { data: logs } = await admin
+          .from('email_send_log')
+          .select('message_id, status, error_message, created_at, provider_message_id, provider_response')
+          .in('message_id', ids)
+          .order('created_at', { ascending: false })
+        for (const l of logs ?? []) {
+          const existing = sendLogByMsg.get(l.message_id)
+          const isTerminal = (s: string) =>
+            s === 'delivered' || s === 'bounced' || s === 'complained' || s === 'suppressed' || s === 'dlq'
+          if (!existing) sendLogByMsg.set(l.message_id, l)
+          else if (isTerminal(l.status) && !isTerminal(existing.status)) sendLogByMsg.set(l.message_id, l)
+        }
+      } catch (err) {
+        console.warn('Could not batch load email_send_log:', err)
       }
     }
 
     const merged = (rows ?? []).map((r: any) => {
       const sl = r.message_id ? sendLogByMsg.get(r.message_id) : null
       const driver = r.driver_person_id ? driversMap.get(r.driver_person_id) : null
+      const stopInfo = r.schedule_stop_id ? stopsMap.get(r.schedule_stop_id) : null
       const finalStatus = sl?.status ?? r.status
       return {
         id: r.id,
         notification_type: r.notification_type,
         recipient_email: r.recipient_email,
         driver_name: driver?.full_name ?? null,
-        location_name: r.stop?.location?.name ?? null,
-        scheduled_date: r.stop?.schedule_date?.date ?? null,
+        location_name: stopInfo?.locationName ?? null,
+        scheduled_date: stopInfo?.scheduledDate ?? null,
         created_at: r.created_at,
         sent_at: r.sent_at,
         message_id: r.message_id,
@@ -454,6 +501,36 @@ export const sendTestEmailToSelf = createServerFn({ method: 'POST' })
       status: 'pending',
     })
 
+    const apiKey = process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || (import.meta as any).env?.VITE_RESEND_API_KEY
+    if (apiKey) {
+      try {
+        const resendRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            from: `Kruh Življenja <kruh@kalvarija.si>`,
+            to: [recipientEmail],
+            subject,
+            html,
+            text,
+          }),
+        })
+        const resData = await resendRes.json()
+        if (resendRes.ok) {
+          await admin.from('email_send_log').update({
+            status: 'sent',
+            provider_message_id: resData.id,
+          }).eq('message_id', messageId)
+          return { ok: true, recipient: recipientEmail, message_id: messageId }
+        }
+      } catch (rErr) {
+        console.warn('Resend direct test dispatch notice:', rErr)
+      }
+    }
+
     const { error } = await admin.rpc('enqueue_email', {
       queue_name: 'transactional_emails',
       payload: {
@@ -471,7 +548,7 @@ export const sendTestEmailToSelf = createServerFn({ method: 'POST' })
         queued_at: new Date().toISOString(),
       },
     })
-    if (error) throw new Error(error.message)
+    if (error && !apiKey) throw new Error(error.message)
     return { ok: true, recipient: recipientEmail, message_id: messageId }
   })
 

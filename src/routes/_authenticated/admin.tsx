@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Plus,
   Trash2,
@@ -31,6 +35,7 @@ import {
 import { toast } from "sonner";
 import { currentMinistryStartYear, ministryLabel } from "@/lib/ministry-year";
 import { LocationLogo } from "@/components/location-logo";
+import { serverSavePerson } from "@/lib/people.functions";
 import {
   serverGetAdminData,
   serverAddRecurringRule,
@@ -84,6 +89,11 @@ function AdminPage() {
   // User management tab & search state
   const [userTab, setUserTab] = useState<UserTab>("team");
   const [userSearch, setUserSearch] = useState("");
+
+  // Add / Edit person dialog state
+  const [editingPerson, setEditingPerson] = useState<any>(null);
+  const [personModalOpen, setPersonModalOpen] = useState(false);
+  const [savingPerson, setSavingPerson] = useState(false);
 
   const loadAll = async () => {
     try {
@@ -239,6 +249,66 @@ function AdminPage() {
     }
     toast.success(t("personCreated"));
     loadAll();
+  };
+
+  const startNewPerson = () => {
+    setEditingPerson({
+      full_name: "",
+      first_name: "",
+      last_name: "",
+      phone: "",
+      email: "",
+      address: "",
+      notes: "",
+      active: true,
+      roles: [],
+      profile_id: null,
+      isRecipient: false,
+      household: { id: null, name: "", address: "", phone: "", notes: "", size: 1, active: true },
+      pickupHhIds: [] as string[],
+    });
+    setPersonModalOpen(true);
+  };
+
+  const savePerson = async () => {
+    if (!editingPerson) return;
+    const first = (editingPerson.first_name ?? "").trim();
+    const last = (editingPerson.last_name ?? "").trim();
+    const fullName = [first, last].filter(Boolean).join(" ") || (editingPerson.full_name ?? "").trim();
+    if (!fullName) return toast.error(t("firstName"));
+
+    setSavingPerson(true);
+    try {
+      const res = await serverSavePerson({
+        data: {
+          id: editingPerson.id,
+          profile_id: editingPerson.profile_id,
+          first_name: first || null,
+          last_name: last || null,
+          full_name: fullName,
+          phone: editingPerson.phone || null,
+          email: editingPerson.email || null,
+          address: editingPerson.address || null,
+          notes: editingPerson.notes || null,
+          active: editingPerson.active !== false,
+          roles: editingPerson.roles ?? [],
+          isRecipient: editingPerson.isRecipient,
+          household: editingPerson.household,
+          pickupHhIds: editingPerson.pickupHhIds ?? [],
+        },
+      });
+
+      if (!res.success) {
+        toast.error(res.error || "Napaka pri shranjevanju osebe");
+        return;
+      }
+
+      toast.success(t("saved"));
+      setPersonModalOpen(false);
+      loadAll();
+    } finally {
+      setSavingPerson(false);
+    }
   };
 
   const syncAllMembersToPeople = async () => {
@@ -900,16 +970,26 @@ function AdminPage() {
               <Users className="h-5 w-5 text-primary" />
               <CardTitle className="text-lg">{t("manageUsers")}</CardTitle>
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-medium">
-                {t("driversTab")}: <strong className="text-slate-800">{driverCount}</strong>
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-medium">
-                {t("coordinatorsTab")}: <strong className="text-slate-800">{coordinatorCount}</strong>
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 font-medium">
-                {t("recipientsTab")}: <strong className="text-rose-900">{recipientCount}</strong>
-              </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-medium">
+                  {t("driversTab")}: <strong className="text-slate-800">{driverCount}</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-medium">
+                  {t("coordinatorsTab")}: <strong className="text-slate-800">{coordinatorCount}</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 font-medium">
+                  {t("recipientsTab")}: <strong className="text-rose-900">{recipientCount}</strong>
+                </span>
+              </div>
+              <Button
+                size="sm"
+                onClick={startNewPerson}
+                className="gap-1.5 bg-[#93032E] hover:bg-[#7b0226] text-white text-xs h-8 shadow-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("addPerson")}
+              </Button>
             </div>
           </div>
           <CardDescription>
@@ -1239,6 +1319,268 @@ function AdminPage() {
           </ul>
         </CardContent>
       </Card>
+
+      {/* ADD / EDIT PERSON DIALOG */}
+      <Dialog open={personModalOpen} onOpenChange={setPersonModalOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingPerson?.id ? t("edit") : t("addPerson")}</DialogTitle>
+          </DialogHeader>
+          {editingPerson && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>{t("firstName")}</Label>
+                  <Input
+                    value={editingPerson.first_name ?? ""}
+                    onChange={(e) => setEditingPerson({ ...editingPerson, first_name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>{t("lastName")}</Label>
+                  <Input
+                    value={editingPerson.last_name ?? ""}
+                    onChange={(e) => setEditingPerson({ ...editingPerson, last_name: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>{t("phone")}</Label>
+                  <Input
+                    value={editingPerson.phone ?? ""}
+                    onChange={(e) => setEditingPerson({ ...editingPerson, phone: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>{t("email")}</Label>
+                  <Input
+                    value={editingPerson.email ?? ""}
+                    onChange={(e) => setEditingPerson({ ...editingPerson, email: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* ADDRESS FIELD */}
+              <div>
+                <Label>{t("address")}</Label>
+                <Input
+                  value={editingPerson.address ?? ""}
+                  onChange={(e) => setEditingPerson({ ...editingPerson, address: e.target.value })}
+                  placeholder="npr. Mariborska cesta 12, 3000 Celje"
+                />
+              </div>
+
+              <div>
+                <Label>{t("notes")}</Label>
+                <Textarea
+                  value={editingPerson.notes ?? ""}
+                  onChange={(e) => setEditingPerson({ ...editingPerson, notes: e.target.value })}
+                />
+              </div>
+
+              {/* ROLES TOGGLE */}
+              <div>
+                <Label>{t("roles")}</Label>
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  {/* Admin */}
+                  {(() => {
+                    const on = (editingPerson.roles ?? []).includes("admin");
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingPerson({
+                            ...editingPerson,
+                            roles: on
+                              ? editingPerson.roles.filter((x: string) => x !== "admin")
+                              : [...(editingPerson.roles ?? []), "admin"],
+                          })
+                        }
+                        className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                          on
+                            ? "bg-amber-600 text-white border-amber-600 shadow-2xs"
+                            : "border-amber-200/90 text-amber-800 bg-amber-50/50 hover:bg-amber-100/70"
+                        }`}
+                      >
+                        <Crown className={`h-3.5 w-3.5 ${on ? "text-white fill-white/20" : "text-amber-600"}`} />
+                        {t("adminRole")}
+                      </button>
+                    );
+                  })()}
+
+                  {/* Driver */}
+                  {(() => {
+                    const on = (editingPerson.roles ?? []).includes("driver");
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingPerson({
+                            ...editingPerson,
+                            roles: on
+                              ? editingPerson.roles.filter((x: string) => x !== "driver")
+                              : [...(editingPerson.roles ?? []), "driver"],
+                          })
+                        }
+                        className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                          on
+                            ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                            : "border-emerald-200/90 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100/70"
+                        }`}
+                      >
+                        <Truck className={`h-3.5 w-3.5 ${on ? "text-white" : "text-emerald-600"}`} />
+                        {t("driver")}
+                      </button>
+                    );
+                  })()}
+
+                  {/* Distributor */}
+                  {(() => {
+                    const on = (editingPerson.roles ?? []).includes("coordinator");
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingPerson({
+                            ...editingPerson,
+                            roles: on
+                              ? editingPerson.roles.filter((x: string) => x !== "coordinator")
+                              : [...(editingPerson.roles ?? []), "coordinator"],
+                          })
+                        }
+                        className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                          on
+                            ? "bg-[#93032E] text-white border-[#93032E] shadow-2xs"
+                            : "border-rose-200/90 text-[#93032E] bg-rose-50/50 hover:bg-rose-100/70"
+                        }`}
+                      >
+                        <Utensils className={`h-3.5 w-3.5 ${on ? "text-white" : "text-[#93032E]"}`} />
+                        {t("coordinator")}
+                      </button>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <Switch
+                  checked={editingPerson.active}
+                  onCheckedChange={(v) => setEditingPerson({ ...editingPerson, active: v })}
+                />
+                <Label>{t("active")}</Label>
+              </div>
+
+              {/* RECIPIENT TOGGLE */}
+              <div className="border-t pt-3">
+                <label
+                  htmlFor="admin-recipient-switch"
+                  className={`flex items-center justify-between gap-3 rounded-lg border-2 p-3 cursor-pointer transition-colors ${
+                    editingPerson.isRecipient
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-muted/30 hover:bg-muted/50"
+                  }`}
+                >
+                  <span className="flex items-center gap-2 font-medium">
+                    <Heart
+                      className={`h-4 w-4 ${
+                        editingPerson.isRecipient ? "text-primary fill-primary" : "text-muted-foreground"
+                      }`}
+                    />
+                    {t("alsoRecipient")}
+                  </span>
+                  <Switch
+                    id="admin-recipient-switch"
+                    checked={editingPerson.isRecipient}
+                    onCheckedChange={(v) => setEditingPerson({ ...editingPerson, isRecipient: v })}
+                  />
+                </label>
+              </div>
+
+              {editingPerson.isRecipient && (
+                <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
+                  <div className="font-semibold text-sm">{t("recipientDetails")}</div>
+                  <div>
+                    <Label>{t("householdName")}</Label>
+                    <Input
+                      value={editingPerson.household?.name ?? ""}
+                      onChange={(e) =>
+                        setEditingPerson({
+                          ...editingPerson,
+                          household: { ...editingPerson.household, name: e.target.value },
+                        })
+                      }
+                      placeholder={editingPerson.full_name || t("name")}
+                    />
+                  </div>
+                  <div>
+                    <Label>{t("address")}</Label>
+                    <Input
+                      value={editingPerson.household?.address ?? editingPerson.address ?? ""}
+                      onChange={(e) =>
+                        setEditingPerson({
+                          ...editingPerson,
+                          household: { ...editingPerson.household, address: e.target.value },
+                          address: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label>{t("householdSize")}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={editingPerson.household?.size ?? 1}
+                        onChange={(e) =>
+                          setEditingPerson({
+                            ...editingPerson,
+                            household: { ...editingPerson.household, size: Number(e.target.value) || 1 },
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>{t("phone")}</Label>
+                      <Input
+                        value={editingPerson.household?.phone ?? editingPerson.phone ?? ""}
+                        onChange={(e) =>
+                          setEditingPerson({
+                            ...editingPerson,
+                            household: { ...editingPerson.household, phone: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label>{t("notes")}</Label>
+                    <Textarea
+                      value={editingPerson.household?.notes ?? ""}
+                      onChange={(e) =>
+                        setEditingPerson({
+                          ...editingPerson,
+                          household: { ...editingPerson.household, notes: e.target.value },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPersonModalOpen(false)} disabled={savingPerson}>
+              {t("cancel")}
+            </Button>
+            <Button onClick={savePerson} disabled={savingPerson} className="bg-[#93032E] hover:bg-[#7b0226] text-white">
+              {savingPerson ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
+              {t("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { generateProfileSlug } from "@/lib/people.functions";
 
 // Standardize roles: replace any 'superadmin' with 'admin' and ensure bootstrap admin
 export const bootstrapAdminRoles = createServerFn({ method: "POST" }).handler(
@@ -21,11 +22,7 @@ export const bootstrapAdminRoles = createServerFn({ method: "POST" }).handler(
         const uid = p.auth_user_id || p.id;
         if (uid) {
           await (supabaseAdmin as any).from("user_roles").upsert(
-            { user_id: uid, role: "admin", app: "kruh" },
-            { onConflict: "user_id,role" }
-          );
-          await (supabaseAdmin as any).from("user_roles").upsert(
-            { user_id: uid, role: "admin", app: "main" },
+            { user_id: uid, role: "admin" },
             { onConflict: "user_id,role" }
           );
         }
@@ -57,7 +54,7 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         const uid = p.auth_user_id || p.id;
         if (uid) {
           await (supabaseAdmin as any).from("user_roles").upsert(
-            { user_id: uid, role: "admin", app: "kruh" },
+            { user_id: uid, role: "admin" },
             { onConflict: "user_id,role" }
           );
         }
@@ -78,7 +75,7 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         (supabaseAdmin as any).from("profiles").select("*").order("full_name", { ascending: true }),
         (supabaseAdmin as any).from("people").select("id,profile_id,full_name,first_name,last_name,email,phone,active").order("full_name"),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
-        (supabaseAdmin as any).from("user_roles").select("user_id,role,app"),
+        (supabaseAdmin as any).from("user_roles").select("user_id,role"),
         (supabaseAdmin as any).from("ministry_years").select("*").order("start_year", { ascending: false }),
         (supabaseAdmin as any).from("locations").select("*").order("name"),
         (supabaseAdmin as any).from("recurring_schedule_rules").select("*").order("weekday").order("frequency"),
@@ -87,9 +84,92 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         (supabaseAdmin as any).from("recipient_households").select("id,name,size,person_id,active").order("name"),
       ]);
 
+      const finalProfiles = [...(profs ?? [])];
+      const profIdSet = new Set(finalProfiles.map((p: any) => String(p.id)));
+      const profEmailMap = new Map(
+        finalProfiles
+          .filter((pr: any) => pr.email)
+          .map((pr: any) => [pr.email.toLowerCase().trim(), pr])
+      );
+
+      const rolesByPerson: Record<string, string[]> = {};
+      for (const r of pplRoles ?? []) {
+        (rolesByPerson[r.person_id] ||= []).push(r.role);
+      }
+
+      for (const p of ppl ?? []) {
+        const emailKey = p.email ? p.email.toLowerCase().trim() : null;
+        let existingProf = p.profile_id && profIdSet.has(String(p.profile_id))
+          ? finalProfiles.find((x: any) => String(x.id) === String(p.profile_id))
+          : emailKey
+          ? profEmailMap.get(emailKey)
+          : null;
+
+        const roles = rolesByPerson[p.id] ?? [];
+        const isDriver = roles.includes("driver");
+        const hasAnyRole = roles.length > 0;
+        const mainRole = roles.includes("admin")
+          ? "admin"
+          : roles.includes("coordinator")
+          ? "coordinator"
+          : isDriver
+          ? "driver"
+          : null;
+
+        if (!existingProf) {
+          const baseSlug = generateProfileSlug(p.first_name, p.last_name, p.full_name, p.email);
+          let finalId = baseSlug;
+          let counter = 2;
+          while (profIdSet.has(finalId)) {
+            finalId = `${baseSlug}_${counter++}`;
+          }
+
+          const fullName =
+            p.full_name ||
+            [p.first_name, p.last_name].filter(Boolean).join(" ") ||
+            "Neznano";
+
+          const profileInsert: any = {
+            id: finalId,
+            full_name: fullName,
+            name: fullName,
+            first_name: p.first_name || null,
+            last_name: p.last_name || null,
+            email: p.email?.trim() || null,
+            phone: p.phone?.trim() || null,
+            notes: p.notes?.trim() || null,
+            active: p.active !== false,
+            approval_status: "approved",
+            allowed_apps: ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"],
+            is_driver: isDriver,
+            is_kruh_volunteer: hasAnyRole,
+            kruh_role: mainRole,
+          };
+
+          const { data: newProf, error: insErr } = await (supabaseAdmin as any)
+            .from("profiles")
+            .insert(profileInsert)
+            .select("*")
+            .maybeSingle();
+
+          if (newProf?.id) {
+            profIdSet.add(newProf.id);
+            if (newProf.email) profEmailMap.set(newProf.email.toLowerCase().trim(), newProf);
+            finalProfiles.push(newProf);
+            p.profile_id = newProf.id;
+            await (supabaseAdmin as any).from("people").update({ profile_id: newProf.id }).eq("id", p.id);
+          } else if (insErr) {
+            console.warn("serverGetAdminData: failed to create profile for", p.full_name, insErr);
+          }
+        } else if (p.profile_id !== existingProf.id) {
+          p.profile_id = existingProf.id;
+          await (supabaseAdmin as any).from("people").update({ profile_id: existingProf.id }).eq("id", p.id);
+        }
+      }
+
       return {
         success: true,
-        profiles: profs ?? [],
+        profiles: finalProfiles,
         people: ppl ?? [],
         peopleRoles: pplRoles ?? [],
         userRoles: ur ?? [],
@@ -518,7 +598,7 @@ export const serverToggleRole = createServerFn({ method: "POST" })
         } else {
           await (supabaseAdmin as any)
             .from("user_roles")
-            .upsert({ user_id: targetAuthId, app: "kruh", role: data.role }, { onConflict: "user_id,role" });
+            .upsert({ user_id: targetAuthId, role: data.role }, { onConflict: "user_id,role" });
         }
       }
 

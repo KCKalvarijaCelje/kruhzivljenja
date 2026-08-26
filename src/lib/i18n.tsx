@@ -150,6 +150,10 @@ const dict = {
   alsoRecipient: { sl: "Označi tudi kot prejemnika", en: "Also mark as recipient" },
   recipientDetails: { sl: "Podatki prejemnika", en: "Recipient details" },
   recipientActive: { sl: "Prejemnik aktiven", en: "Recipient active" },
+  householdName: { sl: "Ime gospodinjstva", en: "Household name" },
+  householdSize: { sl: "Število oseb", en: "Number of people" },
+  driverPickupHouseholdsTitle: { sl: "Gospodinjstva za prevzem", en: "Pickup households" },
+  driverPickupHouseholdsHelp: { sl: "Ko ta oseba vozi, bodo ta gospodinjstva izključena iz aktivnega seznama.", en: "When this person drives, these households will be excluded from the active list." },
 
   // Delete
   deleteEntry: { sl: "Odstrani osebo", en: "Remove person" },

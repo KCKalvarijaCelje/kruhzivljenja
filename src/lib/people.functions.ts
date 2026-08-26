@@ -26,6 +26,133 @@ export type PersonSaveInput = {
   pickupHhIds?: string[];
 };
 
+export function generateProfileSlug(
+  firstName?: string | null,
+  lastName?: string | null,
+  fullName?: string | null,
+  email?: string | null
+): string {
+  const transliterate = (str: string) =>
+    str
+      .toLowerCase()
+      .replace(/č/g, "c")
+      .replace(/ć/g, "c")
+      .replace(/š/g, "s")
+      .replace(/ž/g, "z")
+      .replace(/đ/g, "d")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+  const first = (firstName ?? "").trim();
+  const last = (lastName ?? "").trim();
+
+  let slug = "";
+  if (first && last) {
+    slug = `${transliterate(first)}_${transliterate(last)}`;
+  } else if (fullName && fullName.trim()) {
+    slug = transliterate(fullName.trim());
+  } else if (email && email.trim()) {
+    slug = transliterate(email.split("@")[0]);
+  } else {
+    slug = `user_${Date.now().toString(36)}`;
+  }
+
+  return `p-${slug}`;
+}
+
+async function syncUnlinkedPeopleToProfiles(
+  people: any[],
+  profiles: any[],
+  peopleRoles: any[]
+): Promise<any[]> {
+  const profIdSet = new Set((profiles ?? []).map((p: any) => String(p.id)));
+  const profEmailMap = new Map(
+    (profiles ?? [])
+      .filter((pr: any) => pr.email)
+      .map((pr: any) => [pr.email.toLowerCase().trim(), pr])
+  );
+
+  const rolesByPerson: Record<string, string[]> = {};
+  for (const r of peopleRoles ?? []) {
+    (rolesByPerson[r.person_id] ||= []).push(r.role);
+  }
+
+  const updatedProfiles = [...(profiles ?? [])];
+
+  for (const p of people ?? []) {
+    const emailKey = p.email ? p.email.toLowerCase().trim() : null;
+    let existingProf = p.profile_id && profIdSet.has(String(p.profile_id))
+      ? updatedProfiles.find((x: any) => String(x.id) === String(p.profile_id))
+      : emailKey
+      ? profEmailMap.get(emailKey)
+      : null;
+
+    const roles = rolesByPerson[p.id] ?? [];
+    const isDriver = roles.includes("driver");
+    const hasAnyRole = roles.length > 0;
+    const mainRole = roles.includes("admin")
+      ? "admin"
+      : roles.includes("coordinator")
+      ? "coordinator"
+      : isDriver
+      ? "driver"
+      : null;
+
+    if (!existingProf) {
+      const baseSlug = generateProfileSlug(p.first_name, p.last_name, p.full_name, p.email);
+      let finalId = baseSlug;
+      let counter = 2;
+      while (profIdSet.has(finalId)) {
+        finalId = `${baseSlug}_${counter++}`;
+      }
+
+      const fullName =
+        p.full_name ||
+        [p.first_name, p.last_name].filter(Boolean).join(" ") ||
+        "Neznano";
+
+      const profileInsert: any = {
+        id: finalId,
+        full_name: fullName,
+        name: fullName,
+        first_name: p.first_name || null,
+        last_name: p.last_name || null,
+        email: p.email?.trim() || null,
+        phone: p.phone?.trim() || null,
+        address: p.address?.trim() || null,
+        notes: p.notes?.trim() || null,
+        active: p.active !== false,
+        approval_status: "approved",
+        allowed_apps: ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"],
+        is_driver: isDriver,
+        is_kruh_volunteer: hasAnyRole,
+        kruh_role: mainRole,
+      };
+
+      const { data: newProf, error: insErr } = await (supabaseAdmin as any)
+        .from("profiles")
+        .insert(profileInsert)
+        .select("*")
+        .maybeSingle();
+
+      if (newProf?.id) {
+        profIdSet.add(newProf.id);
+        if (newProf.email) profEmailMap.set(newProf.email.toLowerCase().trim(), newProf);
+        updatedProfiles.push(newProf);
+        p.profile_id = newProf.id;
+        await (supabaseAdmin as any).from("people").update({ profile_id: newProf.id }).eq("id", p.id);
+      } else if (insErr) {
+        console.warn("Could not auto-create profile for person:", p.full_name, insErr);
+      }
+    } else if (p.profile_id !== existingProf.id) {
+      p.profile_id = existingProf.id;
+      await (supabaseAdmin as any).from("people").update({ profile_id: existingProf.id }).eq("id", p.id);
+    }
+  }
+
+  return updatedProfiles;
+}
+
 export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
   async () => {
     try {
@@ -34,7 +161,7 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
         { data: peopleRoles },
         { data: households },
         { data: pickups },
-        { data: profiles }
+        { data: profilesRaw }
       ] = await Promise.all([
         (supabaseAdmin as any).from("people").select("*").order("full_name"),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
@@ -42,6 +169,8 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
         (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id"),
         (supabaseAdmin as any).from("profiles").select("*"),
       ]);
+
+      const profiles = await syncUnlinkedPeopleToProfiles(people ?? [], profilesRaw ?? [], peopleRoles ?? []);
 
       const rolesByPerson: Record<string, string[]> = {};
       for (const r of peopleRoles ?? []) {
@@ -67,30 +196,40 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
           .map((pr: any) => [pr.email.toLowerCase().trim(), pr])
       );
 
-      const enriched = (people ?? []).map((p: any) => {
-        const hhList = householdsByPerson[p.id] ?? [];
-        const primaryHh = hhList[0] ?? null;
-        const profile =
-          (p.profile_id && profMap.get(String(p.profile_id))) ||
-          (p.email && profEmailMap.get(p.email.toLowerCase().trim())) ||
-          null;
+      const enriched = (people ?? [])
+        .map((p: any) => {
+          const hhList = householdsByPerson[p.id] ?? [];
+          const primaryHh = hhList[0] ?? null;
+          const profile =
+            (p.profile_id && profMap.get(String(p.profile_id))) ||
+            (p.email && profEmailMap.get(p.email.toLowerCase().trim())) ||
+            null;
 
-        const resolvedAddress =
-          p.address ||
-          primaryHh?.address ||
-          profile?.address ||
-          profile?.street ||
-          profile?.home_address ||
-          null;
+          const roles = (rolesByPerson[p.id] ?? []).map((role) => ({ role }));
+          const resolvedAddress =
+            p.address ||
+            primaryHh?.address ||
+            profile?.address ||
+            profile?.street ||
+            profile?.home_address ||
+            null;
 
-        return {
-          ...p,
-          address: resolvedAddress,
-          people_roles: (rolesByPerson[p.id] ?? []).map((role) => ({ role })),
-          recipient_households: hhList,
-          pickupHhIds: pickupsByPerson[p.id] ?? [],
-        };
-      });
+          return {
+            ...p,
+            address: resolvedAddress,
+            people_roles: roles,
+            recipient_households: hhList,
+            pickupHhIds: pickupsByPerson[p.id] ?? [],
+          };
+        })
+        .filter((p: any) => {
+          // Only include people with active Kruh roles, recipient households, or pickup assignments
+          const hasRoles = p.people_roles && p.people_roles.length > 0;
+          const hasHouseholds = p.recipient_households && p.recipient_households.length > 0;
+          const hasPickups = p.pickupHhIds && p.pickupHhIds.length > 0;
+          const isKruhFlagged = Boolean(p.is_recipient || p.is_driver || p.is_kruh_volunteer || p.kruh_role);
+          return hasRoles || hasHouseholds || hasPickups || isKruhFlagged;
+        });
 
       return {
         success: true,
@@ -174,7 +313,7 @@ export const serverSavePerson = createServerFn({ method: "POST" })
         await (supabaseAdmin as any).from("people_roles").insert(roleRows);
       }
 
-      // 3. Synchronize church profile & user_roles (if linked to a profile)
+      // 3. Synchronize church profile & user_roles (creates or updates church directory profile)
       let profileId = data.profile_id;
       if (!profileId && data.email) {
         const { data: matchedProfile } = await (supabaseAdmin as any)
@@ -193,18 +332,79 @@ export const serverSavePerson = createServerFn({ method: "POST" })
         }
       }
 
-      if (profileId) {
-        const isDriverRole = rolesToInsert.includes("driver");
-        const hasAnyRole = rolesToInsert.length > 0;
-        const mainKruhRole = rolesToInsert.includes("admin")
-          ? "admin"
-          : rolesToInsert.includes("coordinator")
-          ? "coordinator"
-          : isDriverRole
-          ? "driver"
-          : null;
+      const isDriverRole = rolesToInsert.includes("driver");
+      const hasAnyRole = rolesToInsert.length > 0;
+      const mainKruhRole = rolesToInsert.includes("admin")
+        ? "admin"
+        : rolesToInsert.includes("coordinator")
+        ? "coordinator"
+        : isDriverRole
+        ? "driver"
+        : null;
 
+      if (!profileId) {
+        // Create brand new profile in central church directory with p- slug id
+        const baseSlug = generateProfileSlug(first, last, fullName, data.email);
+        let finalProfileId = baseSlug;
+
+        const { data: existingSlugs } = await (supabaseAdmin as any)
+          .from("profiles")
+          .select("id")
+          .ilike("id", `${baseSlug}%`);
+
+        if (existingSlugs && existingSlugs.length > 0) {
+          const idSet = new Set(existingSlugs.map((s: any) => s.id));
+          let counter = 2;
+          while (idSet.has(finalProfileId)) {
+            finalProfileId = `${baseSlug}_${counter++}`;
+          }
+        }
+
+        const profileInsert: any = {
+          id: finalProfileId,
+          full_name: fullName,
+          name: fullName,
+          first_name: first || null,
+          last_name: last || null,
+          email: data.email?.trim() || null,
+          phone: data.phone?.trim() || null,
+          notes: data.notes?.trim() || null,
+          active: data.active !== false,
+          approval_status: "approved",
+          allowed_apps: ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"],
+          is_driver: isDriverRole,
+          is_kruh_volunteer: hasAnyRole,
+          kruh_role: mainKruhRole,
+        };
+
+        if (data.address) {
+          profileInsert.address = data.address.trim();
+        }
+
+        const { data: newProfile, error: profErr } = await (supabaseAdmin as any)
+          .from("profiles")
+          .insert(profileInsert)
+          .select("id")
+          .maybeSingle();
+
+        if (newProfile?.id) {
+          profileId = newProfile.id;
+          await (supabaseAdmin as any)
+            .from("people")
+            .update({ profile_id: profileId })
+            .eq("id", personId);
+        } else if (profErr) {
+          console.warn("Could not insert profile into profiles table:", profErr);
+        }
+      } else {
+        // Update existing profile in central church directory
         const profilePatch: any = {
+          full_name: fullName,
+          name: fullName,
+          first_name: first || null,
+          last_name: last || null,
+          phone: data.phone?.trim() || null,
+          email: data.email?.trim() || null,
           is_driver: isDriverRole,
           is_kruh_volunteer: hasAnyRole,
           kruh_role: mainKruhRole,
@@ -219,6 +419,13 @@ export const serverSavePerson = createServerFn({ method: "POST" })
           .update(profilePatch)
           .eq("id", profileId);
 
+        await (supabaseAdmin as any)
+          .from("people")
+          .update({ profile_id: profileId })
+          .eq("id", personId);
+      }
+
+      if (profileId) {
         // Fetch auth_user_id from profile
         const { data: profRow } = await (supabaseAdmin as any)
           .from("profiles")
@@ -236,12 +443,11 @@ export const serverSavePerson = createServerFn({ method: "POST" })
           await (supabaseAdmin as any)
             .from("user_roles")
             .delete()
-            .eq("user_id", targetAuthId)
-            .eq("app", "kruh");
+            .eq("user_id", targetAuthId);
 
           for (const role of rolesToInsert) {
             await (supabaseAdmin as any).from("user_roles").upsert(
-              { user_id: targetAuthId, app: "kruh", role },
+              { user_id: targetAuthId, role },
               { onConflict: "user_id,role" }
             );
           }
