@@ -72,16 +72,20 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         { data: recTemplates },
         { data: households }
       ] = await Promise.all([
-        (supabaseAdmin as any).from("profiles").select("*").order("full_name", { ascending: true }),
-        (supabaseAdmin as any).from("people").select("id,profile_id,full_name,first_name,last_name,email,phone,active").order("full_name"),
+        (supabaseAdmin as any)
+          .from("profiles")
+          .select("id,auth_user_id,email,full_name,name,first_name,last_name,avatar_url,role,member_type,phone,city,address,birth_date,active,allowed_apps,is_driver,is_kruh_volunteer,kruh_role,kruh_notes,notes,family_members,preferred_ministries,led_ministries,is_exempt_from_burnout,approval_status")
+          .order("full_name", { ascending: true })
+          .limit(200),
+        (supabaseAdmin as any).from("people").select("id,profile_id,full_name,first_name,last_name,email,phone,active").order("full_name").limit(200),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
         (supabaseAdmin as any).from("user_roles").select("user_id,role"),
-        (supabaseAdmin as any).from("ministry_years").select("*").order("start_year", { ascending: false }),
-        (supabaseAdmin as any).from("locations").select("*").order("name"),
-        (supabaseAdmin as any).from("recurring_schedule_rules").select("*").order("weekday").order("frequency"),
-        (supabaseAdmin as any).from("recurring_schedule_rule_stops").select("*,locations(name)").order("sort_order"),
+        (supabaseAdmin as any).from("ministry_years").select("id,label,start_year,end_year,active,is_current").order("start_year", { ascending: false }).limit(20),
+        (supabaseAdmin as any).from("locations").select("id,name,address,active,default_time").order("name").limit(100),
+        (supabaseAdmin as any).from("recurring_schedule_rules").select("id,weekday,frequency,active,description,start_time").order("weekday").order("frequency"),
+        (supabaseAdmin as any).from("recurring_schedule_rule_stops").select("id,rule_id,location_id,sort_order,default_driver_count,locations(name)").order("sort_order"),
         (supabaseAdmin as any).from("recurring_recipient_templates").select("id,rule_id,household_id,recipient_households(name,size)"),
-        (supabaseAdmin as any).from("recipient_households").select("id,name,size,person_id,active").order("name"),
+        (supabaseAdmin as any).from("recipient_households").select("id,name,size,person_id,active").order("name").limit(200),
       ]);
 
       const finalProfiles = [...(profs ?? [])];
@@ -149,7 +153,7 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
           const { data: newProf, error: insErr } = await (supabaseAdmin as any)
             .from("profiles")
             .insert(profileInsert)
-            .select("*")
+            .select("id,auth_user_id,email,full_name,name,first_name,last_name,avatar_url,role,member_type,phone,city,address,birth_date,active,allowed_apps,is_driver,is_kruh_volunteer,kruh_role,kruh_notes,notes,family_members,preferred_ministries,led_ministries,is_exempt_from_burnout,approval_status")
             .maybeSingle();
 
           if (newProf?.id) {
@@ -674,7 +678,10 @@ export const serverSyncAllToPeople = createServerFn({ method: "POST" }).handler(
   async (): Promise<{ success: boolean; count: number; error?: string }> => {
     try {
       const [{ data: profs }, { data: ppl }] = await Promise.all([
-        (supabaseAdmin as any).from("profiles").select("*"),
+        (supabaseAdmin as any)
+          .from("profiles")
+          .select("id,email,full_name,first_name,last_name,name,phone,is_driver")
+          .limit(300),
         (supabaseAdmin as any).from("people").select("id,profile_id,email"),
       ]);
 

@@ -135,10 +135,10 @@ async function enrichScheduleDates(datesList: any[]): Promise<PublicScheduleRow[
       .from("date_recipients")
       .select("id,schedule_date_id,household_id,person_id,manual_name,force_include")
       .in("schedule_date_id", dateIds),
-    (supabaseAdmin as any).from("people").select("id,full_name,first_name"),
-    (supabaseAdmin as any).from("locations").select("id,name"),
-    (supabaseAdmin as any).from("recipient_households").select("id,name,first_name,person_id,size"),
-    (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id"),
+    (supabaseAdmin as any).from("people").select("id,full_name,first_name").eq("active", true).limit(200),
+    (supabaseAdmin as any).from("locations").select("id,name").eq("active", true).limit(50),
+    (supabaseAdmin as any).from("recipient_households").select("id,name,first_name,person_id,size").eq("active", true).limit(200),
+    (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id").limit(200),
   ]);
 
   const peopleMap = new Map((peopleData ?? []).map((p: any) => [p.id, p]));

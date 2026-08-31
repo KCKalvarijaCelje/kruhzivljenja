@@ -163,11 +163,22 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
         { data: pickups },
         { data: profilesRaw }
       ] = await Promise.all([
-        (supabaseAdmin as any).from("people").select("*").order("full_name"),
+        (supabaseAdmin as any)
+          .from("people")
+          .select("id, profile_id, full_name, first_name, last_name, email, phone, address, notes, active, is_recipient, is_driver, is_kruh_volunteer, kruh_role")
+          .order("full_name")
+          .limit(300),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
-        (supabaseAdmin as any).from("recipient_households").select("*").order("name"),
-        (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id"),
-        (supabaseAdmin as any).from("profiles").select("*"),
+        (supabaseAdmin as any)
+          .from("recipient_households")
+          .select("id, name, contact_name, first_name, address, phone, notes, size, person_id, active")
+          .order("name")
+          .limit(300),
+        (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id").limit(300),
+        (supabaseAdmin as any)
+          .from("profiles")
+          .select("id, email, address, street, home_address, full_name, name")
+          .limit(300),
       ]);
 
       const profiles = await syncUnlinkedPeopleToProfiles(people ?? [], profilesRaw ?? [], peopleRoles ?? []);

@@ -8,8 +8,9 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
       // 1. Get all ministry years
       const { data: yrs } = await (supabaseAdmin as any)
         .from("ministry_years")
-        .select("*")
-        .order("start_year", { ascending: false });
+        .select("id,label,start_year,end_year,active")
+        .order("start_year", { ascending: false })
+        .limit(20);
 
       const yearsList = yrs ?? [];
       let selectedYear = yearsList.find((y: any) => y.id === data.yearId);
@@ -44,15 +45,18 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
         (supabaseAdmin as any)
           .from("people")
           .select("id,profile_id,full_name,email,phone,active")
-          .order("full_name"),
+          .order("full_name")
+          .limit(300),
         (supabaseAdmin as any)
           .from("locations")
           .select("id,name,active")
-          .order("name"),
+          .order("name")
+          .limit(100),
         (supabaseAdmin as any)
           .from("recipient_households")
           .select("id,name,size,active")
-          .order("name"),
+          .order("name")
+          .limit(300),
       ]);
 
       const dateList = rawDates ?? [];
