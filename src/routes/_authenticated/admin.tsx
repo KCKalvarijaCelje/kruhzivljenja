@@ -119,17 +119,29 @@ function AdminPage() {
           ? peopleRolesList.filter((r: any) => r.person_id === person.id).map((r: any) => r.role)
           : [];
 
+        const urRoles = (res.userRoles ?? [])
+          .filter((ur: any) => ur.user_id === p.id || (p.auth_user_id && ur.user_id === p.auth_user_id))
+          .map((ur: any) => ur.role);
+
         const directProfileRoles: string[] = [];
         if (p.is_driver) directProfileRoles.push("driver");
         if (p.kruh_role && ["driver", "coordinator", "admin"].includes(p.kruh_role)) {
           directProfileRoles.push(p.kruh_role);
         }
+        if (p.role === "admin" || p.role === "superadmin" || urRoles.includes("admin")) {
+          directProfileRoles.push("admin");
+        }
+        if (p.role === "coordinator" || urRoles.includes("coordinator")) {
+          directProfileRoles.push("coordinator");
+        }
+        if (p.role === "driver" || urRoles.includes("driver")) {
+          directProfileRoles.push("driver");
+        }
 
-        // When a person exists in Kruh Življenja, people_roles is the authoritative source!
-        const combinedRoles = person ? personRoles : directProfileRoles;
+        const combinedRoles = Array.from(new Set([...personRoles, ...directProfileRoles]));
 
         const allowedApps: string[] = p.allowed_apps || ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"];
-        const hasKruhAccess = allowedApps.includes("kruh-zivljenja") && p.approval_status !== "rejected";
+        const hasKruhAccess = p.approval_status !== "rejected" && (!p.allowed_apps || allowedApps.includes("kruh-zivljenja"));
 
         const matchedHh = householdsList.find(
           (h: any) =>

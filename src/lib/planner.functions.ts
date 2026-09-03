@@ -17,13 +17,18 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
       if (yearsList.length === 0) {
         const startYear = 2026;
         const label = `${startYear}/${startYear + 1}`;
-        const { data: createdYear } = await (supabaseAdmin as any)
-          .from("ministry_years")
-          .insert({ start_year: startYear, label })
-          .select("id,label,start_year")
-          .maybeSingle();
-        if (createdYear) {
-          yearsList = [createdYear];
+        try {
+          const { data: createdYear } = await (supabaseAdmin as any)
+            .from("ministry_years")
+            .insert({ start_year: startYear, label })
+            .select("id,label,start_year")
+            .maybeSingle();
+          if (createdYear) {
+            yearsList = [createdYear];
+          }
+        } catch {}
+        if (yearsList.length === 0) {
+          yearsList = [{ id: "year_2026", start_year: startYear, label }];
         }
       }
 
@@ -33,11 +38,13 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
       }
 
       // Automatically link any orphan schedule_dates (where ministry_year_id is null)
-      if (selectedYear) {
-        await (supabaseAdmin as any)
-          .from("schedule_dates")
-          .update({ ministry_year_id: selectedYear.id })
-          .is("ministry_year_id", null);
+      if (selectedYear && selectedYear.id !== "year_2026") {
+        try {
+          await (supabaseAdmin as any)
+            .from("schedule_dates")
+            .update({ ministry_year_id: selectedYear.id })
+            .is("ministry_year_id", null);
+        } catch {}
       }
 
       // 2. Fetch dates, stops, recipients, and lookups for this year
@@ -47,7 +54,7 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
         { data: locations },
         { data: households }
       ] = await Promise.all([
-        selectedYear
+        selectedYear && selectedYear.id !== "year_2026"
           ? (supabaseAdmin as any)
               .from("schedule_dates")
               .select("id,date,status,notes,ministry_year_id")
@@ -74,7 +81,15 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
           .limit(300),
       ]);
 
-      const dateList = rawDates ?? [];
+      let dateList = rawDates ?? [];
+      if (dateList.length === 0) {
+        const { data: allDates } = await (supabaseAdmin as any)
+          .from("schedule_dates")
+          .select("id,date,status,notes,ministry_year_id")
+          .order("date", { ascending: true })
+          .limit(100);
+        dateList = allDates ?? [];
+      }
       const dateIds = dateList.map((d: any) => d.id);
 
       let allStops: any[] = [];

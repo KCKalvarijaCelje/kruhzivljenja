@@ -83,7 +83,7 @@ function Planner() {
       const res = await serverGetPlannerData({ data: { yearId: targetYearId ?? selectedYearId } });
       if (res.success) {
         setYears(res.years ?? []);
-        const chosenYearId = targetYearId || selectedYearId || res.selectedYear?.id || null;
+        const chosenYearId = targetYearId || selectedYearId || res.selectedYear?.id || res.years?.[0]?.id || null;
         if (chosenYearId && chosenYearId !== selectedYearId) {
           setSelectedYearId(chosenYearId);
         }

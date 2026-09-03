@@ -74,9 +74,9 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
       ] = await Promise.all([
         (supabaseAdmin as any)
           .from("profiles")
-          .select("id,email,full_name,phone,notes,active,approval_status")
+          .select("id,auth_user_id,email,full_name,phone,notes,active,approval_status,role,kruh_role,is_driver,allowed_apps")
           .order("full_name", { ascending: true })
-          .limit(200),
+          .limit(300),
         (supabaseAdmin as any).from("people").select("id,profile_id,full_name,first_name,last_name,email,phone,active").order("full_name").limit(200),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
         (supabaseAdmin as any).from("user_roles").select("user_id,role"),

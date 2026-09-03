@@ -224,19 +224,34 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
             recipient_households: hhList,
             pickupHhIds: pickupsByPerson[p.id] ?? [],
           };
-        })
-        .filter((p: any) => {
-          // Only include people with active Kruh roles, recipient households, or pickup assignments
-          const hasRoles = p.people_roles && p.people_roles.length > 0;
-          const hasHouseholds = p.recipient_households && p.recipient_households.length > 0;
-          const hasPickups = p.pickupHhIds && p.pickupHhIds.length > 0;
-          const isKruhFlagged = Boolean(p.is_recipient || p.is_driver || p.is_kruh_volunteer || p.kruh_role);
-          return hasRoles || hasHouseholds || hasPickups || isKruhFlagged;
         });
+
+      const linkedProfIds = new Set((people ?? []).map((p: any) => String(p.profile_id)).filter(Boolean));
+      const linkedEmails = new Set((people ?? []).map((p: any) => p.email?.toLowerCase().trim()).filter(Boolean));
+
+      const unlinkedPeople = (profiles ?? [])
+        .filter((pr: any) => !linkedProfIds.has(String(pr.id)) && (!pr.email || !linkedEmails.has(pr.email.toLowerCase().trim())))
+        .map((pr: any) => ({
+          id: `virtual-${pr.id}`,
+          profile_id: pr.id,
+          full_name: pr.full_name || pr.email || "Neznano",
+          first_name: pr.first_name || pr.full_name?.split(" ")[0] || "",
+          last_name: pr.last_name || pr.full_name?.split(" ").slice(1).join(" ") || "",
+          email: pr.email,
+          phone: pr.phone,
+          notes: pr.notes,
+          active: pr.active !== false,
+          address: pr.address || null,
+          people_roles: [],
+          recipient_households: [],
+          pickupHhIds: [],
+        }));
+
+      const allPeople = [...enriched, ...unlinkedPeople];
 
       return {
         success: true,
-        people: enriched,
+        people: allPeople,
         allHouseholds: (households ?? []).filter((h: any) => h.active),
       };
     } catch (err: any) {
@@ -278,7 +293,7 @@ export const serverSavePerson = createServerFn({ method: "POST" })
         personPayload.profile_id = data.profile_id;
       }
 
-      let personId = data.id;
+      let personId = data.id && !data.id.startsWith("virtual-") ? data.id : null;
 
       // 1. Insert or update people record
       if (personId) {
