@@ -8,7 +8,7 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
       // 1. Get all ministry years
       const { data: yrs } = await (supabaseAdmin as any)
         .from("ministry_years")
-        .select("id,label,start_year,end_year,active")
+        .select("id,label,start_year")
         .order("start_year", { ascending: false })
         .limit(20);
 
@@ -19,8 +19,8 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
         const label = `${startYear}/${startYear + 1}`;
         const { data: createdYear } = await (supabaseAdmin as any)
           .from("ministry_years")
-          .insert({ start_year: startYear, end_year: startYear + 1, label, active: true })
-          .select("id,label,start_year,end_year,active")
+          .insert({ start_year: startYear, label })
+          .select("id,label,start_year")
           .maybeSingle();
         if (createdYear) {
           yearsList = [createdYear];
@@ -138,9 +138,9 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
         years: yearsList,
         selectedYear,
         dates: enrichedDates,
-        people: (people ?? []).filter((p: any) => p.active),
-        locations: (locations ?? []).filter((l: any) => l.active),
-        households: (households ?? []).filter((h: any) => h.active),
+        people: (people ?? []).filter((p: any) => p.active !== false),
+        locations: (locations ?? []).filter((l: any) => l.active !== false),
+        households: (households ?? []).filter((h: any) => h.active !== false),
       };
     } catch (err: any) {
       console.error("serverGetPlannerData error:", err);

@@ -15,11 +15,11 @@ export const bootstrapAdminRoles = createServerFn({ method: "POST" }).handler(
 
       const { data: profs } = await (supabaseAdmin as any)
         .from("profiles")
-        .select("id,auth_user_id,email")
+        .select("id,email")
         .in("email", ADMIN_BOOTSTRAP_EMAILS);
 
       for (const p of profs ?? []) {
-        const uid = p.auth_user_id || p.id;
+        const uid = p.id;
         if (uid) {
           await (supabaseAdmin as any).from("user_roles").upsert(
             { user_id: uid, role: "admin" },
@@ -47,11 +47,11 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
       const ADMIN_BOOTSTRAP_EMAILS = ["ales.lajlar@gmail.com"];
       const { data: profsBootstrap } = await (supabaseAdmin as any)
         .from("profiles")
-        .select("id,auth_user_id,email")
+        .select("id,email")
         .in("email", ADMIN_BOOTSTRAP_EMAILS);
 
       for (const p of profsBootstrap ?? []) {
-        const uid = p.auth_user_id || p.id;
+        const uid = p.id;
         if (uid) {
           await (supabaseAdmin as any).from("user_roles").upsert(
             { user_id: uid, role: "admin" },
@@ -74,15 +74,15 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
       ] = await Promise.all([
         (supabaseAdmin as any)
           .from("profiles")
-          .select("id,auth_user_id,email,full_name,name,first_name,last_name,avatar_url,role,member_type,phone,city,address,birth_date,active,allowed_apps,is_driver,is_kruh_volunteer,kruh_role,kruh_notes,notes,family_members,preferred_ministries,led_ministries,is_exempt_from_burnout,approval_status")
+          .select("id,email,full_name,phone,notes,active,approval_status")
           .order("full_name", { ascending: true })
           .limit(200),
         (supabaseAdmin as any).from("people").select("id,profile_id,full_name,first_name,last_name,email,phone,active").order("full_name").limit(200),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
         (supabaseAdmin as any).from("user_roles").select("user_id,role"),
-        (supabaseAdmin as any).from("ministry_years").select("id,label,start_year,end_year,active,is_current").order("start_year", { ascending: false }).limit(20),
-        (supabaseAdmin as any).from("locations").select("id,name,address,active,default_time").order("name").limit(100),
-        (supabaseAdmin as any).from("recurring_schedule_rules").select("id,weekday,frequency,active,description,start_time").order("weekday").order("frequency"),
+        (supabaseAdmin as any).from("ministry_years").select("id,label,start_year").order("start_year", { ascending: false }).limit(20),
+        (supabaseAdmin as any).from("locations").select("id,name,address,active").order("name").limit(100),
+        (supabaseAdmin as any).from("recurring_schedule_rules").select("id,weekday,frequency,active").order("weekday").order("frequency"),
         (supabaseAdmin as any).from("recurring_schedule_rule_stops").select("id,rule_id,location_id,sort_order,default_driver_count,locations(name)").order("sort_order"),
         (supabaseAdmin as any).from("recurring_recipient_templates").select("id,rule_id,household_id,recipient_households(name,size)"),
         (supabaseAdmin as any).from("recipient_households").select("id,name,size,person_id,active").order("name").limit(200),
@@ -136,24 +136,17 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
           const profileInsert: any = {
             id: finalId,
             full_name: fullName,
-            name: fullName,
-            first_name: p.first_name || null,
-            last_name: p.last_name || null,
             email: p.email?.trim() || null,
             phone: p.phone?.trim() || null,
             notes: p.notes?.trim() || null,
             active: p.active !== false,
             approval_status: "approved",
-            allowed_apps: ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"],
-            is_driver: isDriver,
-            is_kruh_volunteer: hasAnyRole,
-            kruh_role: mainRole,
           };
 
           const { data: newProf, error: insErr } = await (supabaseAdmin as any)
             .from("profiles")
             .insert(profileInsert)
-            .select("id,auth_user_id,email,full_name,name,first_name,last_name,avatar_url,role,member_type,phone,city,address,birth_date,active,allowed_apps,is_driver,is_kruh_volunteer,kruh_role,kruh_notes,notes,family_members,preferred_ministries,led_ministries,is_exempt_from_burnout,approval_status")
+            .select("id,email,full_name,phone,notes,active,approval_status")
             .maybeSingle();
 
           if (newProf?.id) {
@@ -177,8 +170,8 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         const label = `${startYear}/${startYear + 1}`;
         const { data: createdYear } = await (supabaseAdmin as any)
           .from("ministry_years")
-          .insert({ start_year: startYear, end_year: startYear + 1, label, active: true, is_current: true })
-          .select("id,label,start_year,end_year,active,is_current")
+          .insert({ start_year: startYear, label })
+          .select("id,label,start_year")
           .maybeSingle();
         if (createdYear) {
           finalYears = [createdYear];

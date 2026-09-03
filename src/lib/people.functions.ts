@@ -114,25 +114,17 @@ async function syncUnlinkedPeopleToProfiles(
       const profileInsert: any = {
         id: finalId,
         full_name: fullName,
-        name: fullName,
-        first_name: p.first_name || null,
-        last_name: p.last_name || null,
         email: p.email?.trim() || null,
         phone: p.phone?.trim() || null,
-        address: p.address?.trim() || null,
         notes: p.notes?.trim() || null,
         active: p.active !== false,
         approval_status: "approved",
-        allowed_apps: ["nedelje", "kruh-zivljenja", "kavarna", "ucenja"],
-        is_driver: isDriver,
-        is_kruh_volunteer: hasAnyRole,
-        kruh_role: mainRole,
       };
 
       const { data: newProf, error: insErr } = await (supabaseAdmin as any)
         .from("profiles")
         .insert(profileInsert)
-        .select("*")
+        .select("id,email,full_name,phone,notes,active,approval_status")
         .maybeSingle();
 
       if (newProf?.id) {
@@ -165,7 +157,7 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
       ] = await Promise.all([
         (supabaseAdmin as any)
           .from("people")
-          .select("id, profile_id, full_name, first_name, last_name, email, phone, address, notes, active, is_recipient, is_driver, is_kruh_volunteer, kruh_role")
+          .select("id, profile_id, full_name, first_name, last_name, email, phone, notes, active")
           .order("full_name")
           .limit(300),
         (supabaseAdmin as any).from("people_roles").select("person_id,role"),
@@ -177,7 +169,7 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
         (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id").limit(300),
         (supabaseAdmin as any)
           .from("profiles")
-          .select("id, email, address, street, home_address, full_name, name")
+          .select("id, email, full_name, phone, notes, active, approval_status")
           .limit(300),
       ]);
 
