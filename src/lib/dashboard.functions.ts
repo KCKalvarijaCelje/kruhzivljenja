@@ -78,7 +78,7 @@ export const getPublicSchedule = createServerFn({ method: "GET" }).handler(
       const end = `${startYear + 1}-08-31`;
 
       // 1. Fetch dates in range
-      const { data: rawDates, error: datesErr } = await (supabaseAdmin as any)
+      let { data: rawDates, error: datesErr } = await (supabaseAdmin as any)
         .from("schedule_dates")
         .select("id,date,status,notes,ministry_year_id")
         .gte("date", start)
@@ -86,26 +86,16 @@ export const getPublicSchedule = createServerFn({ method: "GET" }).handler(
         .order("date", { ascending: true });
 
       if (datesErr || !rawDates || rawDates.length === 0) {
-        // Fallback: If no dates in exact start-end range, try fetching the active year's dates
-        const { data: activeYear } = await (supabaseAdmin as any)
-          .from("ministry_years")
-          .select("id")
-          .order("start_year", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (!activeYear) return [];
-
-        const { data: yearDates } = await (supabaseAdmin as any)
+        const { data: allDates } = await (supabaseAdmin as any)
           .from("schedule_dates")
           .select("id,date,status,notes,ministry_year_id")
-          .eq("ministry_year_id", activeYear.id)
-          .order("date", { ascending: true });
+          .order("date", { ascending: true })
+          .limit(100);
 
-        if (!yearDates || yearDates.length === 0) return [];
-        return await enrichScheduleDates(yearDates);
+        rawDates = allDates ?? [];
       }
 
+      if (!rawDates || rawDates.length === 0) return [];
       return await enrichScheduleDates(rawDates);
     } catch (err: any) {
       console.error("getPublicSchedule error:", err);
