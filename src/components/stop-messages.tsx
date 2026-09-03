@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, MessageSquare, Send, Trash2, Plus, Minus } from "lucide-react";
 import { toast } from "sonner";
+import { formatDisplayName } from "@/lib/utils";
 import {
   FOOD_CHIPS,
   appendFoodLine,
@@ -30,7 +31,7 @@ export function StopMessages({
   canPost: boolean;
 }) {
   const { t } = useI18n();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, roles } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
@@ -115,7 +116,7 @@ export function StopMessages({
             return (
               <li key={m.id} className="rounded-md bg-muted/40 px-3 py-2 text-sm">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium text-foreground truncate">{m.author_name}</span>
+                  <span className="font-medium text-foreground truncate">{formatDisplayName(m.author_name, { isAdmin, roles })}</span>
                   <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{formatAppDateTime(new Date(m.created_at))}</span>
                 </div>
                 <div className="flex items-start justify-between gap-2 mt-1">

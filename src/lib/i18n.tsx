@@ -9,6 +9,34 @@ const dict = {
     sl: "\"Zastonj ste prejeli, zastonj dajte\" (Mat 10,8) \n\"Jezus jim je rekel: 'Jaz sem kruh življenja. Kdor pride k meni, ne bo lačen, in kdor vame veruje, ne bo nikoli žejen'\" (Jn 6,35)", 
     en: "\"Freely you have received; freely give\" (Mat 10:8 NIV) \n\"Then Jesus declared, 'I am the bread of life. Whoever comes to me will never go hungry, and whoever believes in me will never be thirsty'\" (John 6.35)" 
   },
+  verseMatthew: {
+    sl: "»Tako kot ste brezplačno prejeli, tudi brezplačno dajajte.« (Matej 10,8)",
+    en: "»Freely you have received; freely give.« (Matthew 10:8)"
+  },
+  verseJohn: {
+    sl: "»Jezus jim je rekel: 'Jaz sem kruh življenja. Kdor pride k meni, ne bo lačen, in kdor vame veruje, ne bo nikoli žejen.'« (Jn 6,35)",
+    en: "»Jesus declared: 'I am the bread of life. Whoever comes to me will never go hungry, and whoever believes in me will never be thirsty.'« (John 6:35)"
+  },
+  bannerMotto: {
+    sl: "Živa vera se vidi v tem, kar dajemo.",
+    en: "Living faith is shown in what we give."
+  },
+  bannerNeedBread: {
+    sl: "POTREBUJEŠ KRUH? TUKAJ JE ZATE.",
+    en: "NEED BREAD? HERE IT IS FOR YOU."
+  },
+  bannerFreelyGiven: {
+    sl: "ZASTONJ PREJETO. ZASTONJ DANO.",
+    en: "FREELY RECEIVED. FREELY GIVEN."
+  },
+  bannerBlessingQuote: {
+    sl: "»Večji blagoslov je dajati kakor prejemati.«",
+    en: "»It is more blessed to give than to receive.«"
+  },
+  bannerJesus: {
+    sl: "— Jezus",
+    en: "— Jesus"
+  },
   installApp: { sl: "Namesti aplikacijo", en: "Install app" },
 
   // Auth
@@ -50,7 +78,11 @@ const dict = {
   coordinator: { sl: "Razdeljevalec", en: "Distributor" },
   recipient: { sl: "Prejemnik", en: "Recipient" },
   volunteer: { sl: "Prostovoljec", en: "Volunteer" },
+  viewer: { sl: "Gledalec", en: "Viewer" },
   adminRole: { sl: "Admin", en: "Admin" },
+  adminSimulation: { sl: "ADMIN SIMULACIJA", en: "ADMIN SIMULATION" },
+  simulatingRole: { sl: "Simulacija", en: "Simulating" },
+  resetSimulation: { sl: "Ponastavi", en: "Reset" },
 
   // Dashboard
   upcomingDates: { sl: "Prihajajoči termini", en: "Upcoming dates" },

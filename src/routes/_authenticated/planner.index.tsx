@@ -17,6 +17,7 @@ import { ChevronLeft, ChevronRight, MapPin, Plus, CheckCircle2, Sparkles, Loader
 import { toast } from "sonner";
 import { StopMessages } from "@/components/stop-messages";
 import { LocationLogo } from "@/components/location-logo";
+import { formatDisplayName } from "@/lib/utils";
 import {
   serverGetPlannerData,
   serverUpdateScheduleStopAssignment,
@@ -514,6 +515,7 @@ function DateCard({
   onToggleComplete: (stop: Stop) => void;
 }) {
   const { t, tArr } = useI18n();
+  const { roles } = useAuth();
   const d = new Date(row.date + "T00:00:00");
   const stops = (row.schedule_stops ?? []).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const allDone = stops.length > 0 && stops.every((s) => s.completed_at);
@@ -557,14 +559,14 @@ function DateCard({
                   <div className="grid gap-2 sm:grid-cols-2 sm:ml-5 min-w-0">
                     <SelfAssignSlot
                       label={t("driver")}
-                      assignedName={s.driver?.full_name ?? null}
+                      assignedName={formatDisplayName(s.driver?.full_name, { isAdmin, roles }) || null}
                       canAssign={canSelfDriver && hasLinkedPerson && !s.driver_id}
                       buttonLabel={t("unassigned")}
                       onAssign={() => onSelfAssign(s.id, "driver")}
                     />
                     <SelfAssignSlot
                       label={t("coordinator")}
-                      assignedName={s.coordinator?.full_name ?? null}
+                      assignedName={formatDisplayName(s.coordinator?.full_name, { isAdmin, roles }) || null}
                       canAssign={canSelfCoord && hasLinkedPerson && !s.coordinator_id}
                       buttonLabel={t("unassigned")}
                       onAssign={() => onSelfAssign(s.id, "coordinator")}
@@ -585,7 +587,7 @@ function DateCard({
                   )}
                   {done && s.completer?.full_name && (
                     <div className="sm:ml-5 text-xs text-muted-foreground">
-                      {t("completedBy")}: {s.completer.full_name}
+                      {t("completedBy")}: {formatDisplayName(s.completer.full_name, { isAdmin, roles })}
                     </div>
                   )}
                   {!isAdmin && (

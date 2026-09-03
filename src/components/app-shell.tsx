@@ -18,7 +18,9 @@ import {
   FileText,
   Smartphone,
   CheckCircle2,
-  LogIn
+  LogIn,
+  SlidersHorizontal,
+  Eye,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -31,7 +33,17 @@ import { EcosystemAppsDropdown } from "@/components/EcosystemAppsDropdown";
 import { BrandLogo } from "@/components/BrandLogo";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { isAdmin, signOut, user, fullName, avatarUrl } = useAuth();
+  const {
+    isAdmin,
+    realIsAdmin,
+    simulatedRole,
+    isSimulating,
+    setSimulatedRole,
+    signOut,
+    user,
+    fullName,
+    avatarUrl,
+  } = useAuth();
   const { t, lang, setLang } = useI18n();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -358,28 +370,80 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center gap-1.5 pl-1.5 pr-2.5 py-0.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition cursor-pointer border border-white/20 text-xs font-bold"
+                    className={`flex items-center gap-1.5 pl-1.5 pr-2.5 py-0.5 rounded-lg transition cursor-pointer border text-xs font-bold ${
+                      isSimulating
+                        ? "bg-amber-400 text-slate-950 border-amber-300 hover:bg-amber-300 shadow-xs"
+                        : "bg-white/15 hover:bg-white/25 text-white border-white/20"
+                    }`}
                     title={userFullName}
                   >
-                    <div className="w-5 h-5 rounded-full bg-white text-[#93032E] font-black flex items-center justify-center text-[10px] shrink-0">
+                    <div
+                      className={`w-5 h-5 rounded-full font-black flex items-center justify-center text-[10px] shrink-0 ${
+                        isSimulating ? "bg-slate-950 text-amber-400" : "bg-white text-[#93032E]"
+                      }`}
+                    >
                       {initial}
                     </div>
                     <span className="hidden sm:inline max-w-[160px] truncate">{userFullName}</span>
+                    {isSimulating && (
+                      <span className="hidden md:inline-block px-1.5 py-0.2 bg-slate-950 text-amber-300 rounded text-[9px] font-black uppercase tracking-wider">
+                        {simulatedRole === "driver" ? t("driver") : simulatedRole === "coordinator" ? t("coordinator") : t("viewer")}
+                      </span>
+                    )}
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
-                  className="w-56 bg-white border border-slate-200 shadow-xl rounded-2xl p-2 z-50 text-slate-800 animate-in fade-in slide-in-from-top-2 duration-150"
+                  className="w-64 bg-white border border-slate-200 shadow-xl rounded-2xl p-2 z-50 text-slate-800 animate-in fade-in slide-in-from-top-2 duration-150"
                 >
                   <div className="p-2.5 border-b border-slate-100">
                     <div className="font-bold text-xs text-slate-900 truncate">{userFullName}</div>
                     <div className="text-[11px] text-slate-500 truncate">{user.email}</div>
-                    {isAdmin && (
-                      <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                        Admin
+                    {realIsAdmin ? (
+                      <span className="inline-block mt-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                        Superadmin
+                      </span>
+                    ) : (
+                      <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                        {t("volunteer")}
                       </span>
                     )}
                   </div>
+
+                  {/* ADMIN SIMULATION SECTION */}
+                  {realIsAdmin && (
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="flex items-center gap-1.5 mb-2 text-[10px] font-black tracking-wider text-slate-400 uppercase">
+                        <SlidersHorizontal className="h-3 w-3 text-slate-400" />
+                        <span>{t("adminSimulation")}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { id: "admin", label: t("adminRole") },
+                          { id: "coordinator", label: t("coordinator") },
+                          { id: "driver", label: t("driver") },
+                          { id: "viewer", label: t("viewer") },
+                        ].map((r) => {
+                          const active = (simulatedRole === r.id) || (!simulatedRole && r.id === "admin");
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => setSimulatedRole(r.id === "admin" ? null : (r.id as any))}
+                              className={`px-2 py-1.5 rounded-xl text-xs transition-all border text-center cursor-pointer ${
+                                active
+                                  ? "bg-[#93032E] text-white border-[#93032E] shadow-xs font-bold"
+                                  : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 font-medium"
+                              }`}
+                            >
+                              {r.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <DropdownMenuItem
                     onClick={signOut}
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 mt-1 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer text-left"
@@ -401,6 +465,31 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </div>
+
+      {/* Simulation Alert Banner */}
+      {isSimulating && (
+        <div className="bg-amber-100 border-b border-amber-300/80 px-4 sm:px-6 py-1.5 text-xs text-amber-950 shadow-2xs">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Eye className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+              <span className="font-bold">{t("simulatingRole")}:</span>
+              <span className="font-black bg-amber-200 text-amber-950 px-2 py-0.5 rounded-md text-[11px] uppercase tracking-wide">
+                {simulatedRole === "driver" ? t("driver") : simulatedRole === "coordinator" ? t("coordinator") : t("viewer")}
+              </span>
+              <span className="text-amber-800 hidden sm:inline text-[11px]">
+                ({lang === "sl" ? "Preizkušate pogled te vloge" : "Previewing page as this role"})
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSimulatedRole(null)}
+              className="text-xs font-black text-amber-950 underline hover:text-black cursor-pointer shrink-0"
+            >
+              {t("resetSimulation")} (Admin) &times;
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 2. MAIN WHITE NAVIGATION BAR (Identical to localhost:3000 / kalvarija.si) */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md py-3 sm:py-3.5 border-b border-[#A6A15E]/20 shadow-2xs">

@@ -3,6 +3,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase, getAuthBroadcastChannel, broadcastAuthChange, performGlobalSignOut } from "@/integrations/supabase/client";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "unknown";
+export type SimulatedRole = "admin" | "coordinator" | "driver" | "viewer" | null;
 
 type AuthCtx = {
   user: User | null;
@@ -12,7 +13,12 @@ type AuthCtx = {
   avatarUrl: string;
   loading: boolean;
   roles: string[];
+  realRoles: string[];
   isAdmin: boolean;
+  realIsAdmin: boolean;
+  simulatedRole: SimulatedRole;
+  isSimulating: boolean;
+  setSimulatedRole: (role: SimulatedRole) => void;
   approvalStatus: ApprovalStatus;
   isApproved: boolean;
   signOut: () => Promise<void>;
@@ -27,7 +33,12 @@ const Ctx = createContext<AuthCtx>({
   avatarUrl: "",
   loading: true,
   roles: [],
+  realRoles: [],
   isAdmin: false,
+  realIsAdmin: false,
+  simulatedRole: null,
+  isSimulating: false,
+  setSimulatedRole: () => {},
   approvalStatus: "unknown",
   isApproved: false,
   signOut: async () => {},
@@ -42,6 +53,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [roles, setRoles] = useState<string[]>([]);
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("unknown");
+  const [simulatedRole, setSimulatedRoleState] = useState<SimulatedRole>(() => {
+    if (typeof window === "undefined") return null;
+    const saved = localStorage.getItem("kck_kruh_simulated_role");
+    if (saved && ["admin", "coordinator", "driver", "viewer"].includes(saved)) {
+      return saved as SimulatedRole;
+    }
+    return null;
+  });
+
+  const setSimulatedRole = (role: SimulatedRole) => {
+    setSimulatedRoleState(role);
+    if (typeof window !== "undefined") {
+      if (role) {
+        localStorage.setItem("kck_kruh_simulated_role", role);
+      } else {
+        localStorage.removeItem("kck_kruh_simulated_role");
+      }
+    }
+  };
 
   const ADMIN_BOOTSTRAP_EMAILS = ["ales.lajlar@gmail.com", "whitney.lajlar@gmail.com"];
   const userEmail = session?.user?.email?.toLowerCase()?.trim();
@@ -87,22 +117,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Check linked people & people_roles
       let matchedPerson: any = null;
-      if (prof?.id || userId || emailToMatch) {
-        const { data: person } = await supabase
-          .from("people")
-          .select("id,role,people_roles(role)")
-          .or(`profile_id.eq.${prof?.id || userId},email.ilike.${emailToMatch || ""}`)
-          .limit(1)
-          .maybeSingle();
+      try {
+        const queryFilters: string[] = [];
+        if (prof?.id) queryFilters.push(`profile_id.eq.${prof.id}`);
+        else if (userId) queryFilters.push(`profile_id.eq.${userId}`);
+        if (emailToMatch) queryFilters.push(`email.ilike.${emailToMatch}`);
 
-        matchedPerson = person;
-        if (person) {
-          const prs = ((person as any).people_roles ?? []).map((r: any) => r.role);
-          prs.forEach((r: string) => collectedRoles.add(r));
-          if (person.role && String(person.role).toLowerCase().includes("admin")) {
-            collectedRoles.add("admin");
+        if (queryFilters.length > 0) {
+          const { data: person } = await supabase
+            .from("people")
+            .select("id, full_name, profile_id, email")
+            .or(queryFilters.join(","))
+            .limit(1)
+            .maybeSingle();
+
+          matchedPerson = person;
+          if (person?.id) {
+            const { data: prs } = await supabase
+              .from("people_roles")
+              .select("role")
+              .eq("person_id", person.id);
+
+            (prs ?? []).forEach((r: any) => {
+              if (r.role) collectedRoles.add(r.role);
+            });
           }
         }
+      } catch (e) {
+        console.warn("Could not check linked person/roles:", e);
       }
 
       if (isPrimaryAdmin) {
@@ -207,7 +249,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (session?.user) await loadUserMeta(session.user.id, session.user.email);
   };
 
-  const effectiveIsAdmin = isPrimaryAdmin || roles.includes("admin");
+  const realIsAdmin = isPrimaryAdmin || roles.includes("admin");
+  const realRoles = isPrimaryAdmin && !roles.includes("admin") ? [...roles, "admin"] : roles;
+
+  let effectiveIsAdmin = realIsAdmin;
+  let effectiveRoles = realRoles;
+  const isSimulating = realIsAdmin && simulatedRole !== null && simulatedRole !== "admin";
+
+  if (realIsAdmin && simulatedRole) {
+    if (simulatedRole === "admin") {
+      effectiveIsAdmin = true;
+      effectiveRoles = realRoles;
+    } else if (simulatedRole === "coordinator") {
+      effectiveIsAdmin = false;
+      effectiveRoles = ["coordinator"];
+    } else if (simulatedRole === "driver") {
+      effectiveIsAdmin = false;
+      effectiveRoles = ["driver"];
+    } else if (simulatedRole === "viewer") {
+      effectiveIsAdmin = false;
+      effectiveRoles = [];
+    }
+  }
+
   const effectiveIsApproved = isPrimaryAdmin || approvalStatus === "approved";
   const effectiveStatus: ApprovalStatus = isPrimaryAdmin ? "approved" : approvalStatus;
 
@@ -220,8 +284,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         fullName,
         avatarUrl,
         loading,
-        roles: isPrimaryAdmin && !roles.includes("admin") ? [...roles, "admin"] : roles,
+        roles: effectiveRoles,
+        realRoles,
         isAdmin: effectiveIsAdmin,
+        realIsAdmin,
+        simulatedRole: realIsAdmin ? simulatedRole : null,
+        isSimulating,
+        setSimulatedRole,
         approvalStatus: effectiveStatus,
         isApproved: effectiveIsApproved,
         signOut,

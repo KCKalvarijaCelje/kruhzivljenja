@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { getPublicSchedule, getLatestStopUpdate, type PublicScheduleRow, type PublicRecipient, type LatestStopUpdate } from "@/lib/dashboard.functions";
 import { useAuth } from "@/lib/use-auth";
 import { useI18n } from "@/lib/i18n";
@@ -10,10 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { CalendarDays, LogIn, LayoutDashboard, Loader2, Heart, MessageSquare } from "lucide-react";
 import { formatAppDateTime } from "@/lib/tz";
-import logoUrl from "@/assets/logo.png";
+import logoUrl from "@/assets/logo.webp";
 import { RenderedMessage } from "@/lib/stop-message-format";
 import { AppShell } from "@/components/app-shell";
 import { LocationLogo } from "@/components/location-logo";
+import { formatDisplayName } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
   component: PublicDashboard,
@@ -21,9 +21,7 @@ export const Route = createFileRoute("/dashboard")({
 
 function PublicDashboard() {
   const { t, lang, setLang, tArr } = useI18n();
-  const { user, isApproved, approvalStatus } = useAuth();
-  const fetchPublic = useServerFn(getPublicSchedule);
-  const fetchLatest = useServerFn(getLatestStopUpdate);
+  const { user, isApproved, approvalStatus, isAdmin, roles } = useAuth();
   const [rows, setRows] = useState<PublicScheduleRow[]>([]);
   const [latest, setLatest] = useState<LatestStopUpdate | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,16 +29,26 @@ function PublicDashboard() {
   const startYear = currentMinistryStartYear();
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        const [data, l] = await Promise.all([fetchPublic(), fetchLatest()]);
-        setRows(data ?? []);
-        setLatest(l);
+        const [data, l] = await Promise.all([getPublicSchedule(), getLatestStopUpdate()]);
+        if (!cancelled) {
+          setRows(data ?? []);
+          setLatest(l ?? null);
+        }
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     })();
-  }, [fetchPublic, fetchLatest]);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const upcoming = useMemo(() => rows.filter((r) => r.date >= todayStr), [rows, todayStr]);
   const next = upcoming[0];
@@ -194,7 +202,7 @@ function PublicDashboard() {
                     <div className="text-[11px] text-muted-foreground tabular-nums">{formatAppDateTime(new Date(latest.created_at))}</div>
                   </div>
                   <RenderedMessage body={latest.body} className="text-foreground/90 text-sm" />
-                  <div className="text-xs text-muted-foreground">— {latest.author_name}</div>
+                  <div className="text-xs text-muted-foreground">— {formatDisplayName(latest.author_name, { isAdmin, roles })}</div>
                 </CardContent>
               </Card>
             </section>
@@ -274,6 +282,10 @@ function PublicDashboard() {
 
 function StopBlock({ stop, prominent = false }: { stop: { id: string; location: string | null; driver: string | null; coordinator: string | null }; prominent?: boolean }) {
   const { t } = useI18n();
+  const { isAdmin, roles } = useAuth();
+  const driverName = formatDisplayName(stop.driver, { isAdmin, roles });
+  const coordName = formatDisplayName(stop.coordinator, { isAdmin, roles });
+
   return (
     <div className={`rounded-xl p-4 bg-white border border-slate-200/90 shadow-2xs space-y-3`}>
       <div className="flex items-center gap-2.5">
@@ -283,8 +295,8 @@ function StopBlock({ stop, prominent = false }: { stop: { id: string; location: 
         </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-        <Field label={t("driver")} value={stop.driver} />
-        <Field label={t("coordinator")} value={stop.coordinator} />
+        <Field label={t("driver")} value={driverName} />
+        <Field label={t("coordinator")} value={coordName} />
       </div>
     </div>
   );
@@ -296,7 +308,7 @@ function Field({ label, value }: { label: string; value: string | null }) {
     <div>
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={value ? "font-semibold text-foreground" : "text-muted-foreground italic"}>
-        {value ?? t("unassigned")}
+        {value || t("unassigned")}
       </div>
     </div>
   );
@@ -376,6 +388,7 @@ function DateRow({
   wdLong: (s: string) => string;
 }) {
   const { t } = useI18n();
+  const { isAdmin, roles } = useAuth();
   return (
     <li className="py-4 px-3 space-y-3">
       <div className="flex items-baseline justify-between gap-3">
@@ -389,21 +402,25 @@ function DateRow({
         <EmptyLine text={t("noStops")} />
       ) : (
         <ul className="space-y-2">
-          {row.stops.map((s) => (
-            <li key={s.id} className="text-sm pl-3 border-l-2 border-slate-200 space-y-1">
-              <div className="font-semibold flex items-center gap-2 text-slate-900">
-                <LocationLogo name={s.location} size="sm" />
-                <span>{s.location ?? "—"}</span>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                <span className="uppercase tracking-wider">{t("driver")}:</span>{" "}
-                <span className={s.driver ? "text-foreground font-medium normal-case tracking-normal" : "not-italic font-bold normal-case tracking-normal text-destructive"}>{s.driver ?? t("unassigned")}</span>
-                <span className="mx-2 opacity-40">·</span>
-                <span className="uppercase tracking-wider">{t("coordinator")}:</span>{" "}
-                <span className={s.coordinator ? "text-foreground font-medium normal-case tracking-normal" : "not-italic font-bold normal-case tracking-normal text-destructive"}>{s.coordinator ?? t("unassigned")}</span>
-              </div>
-            </li>
-          ))}
+          {row.stops.map((s) => {
+            const driverName = formatDisplayName(s.driver, { isAdmin, roles });
+            const coordName = formatDisplayName(s.coordinator, { isAdmin, roles });
+            return (
+              <li key={s.id} className="text-sm pl-3 border-l-2 border-slate-200 space-y-1">
+                <div className="font-semibold flex items-center gap-2 text-slate-900">
+                  <LocationLogo name={s.location} size="sm" />
+                  <span>{s.location ?? "—"}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  <span className="uppercase tracking-wider">{t("driver")}:</span>{" "}
+                  <span className={s.driver ? "text-foreground font-medium normal-case tracking-normal" : "not-italic font-bold normal-case tracking-normal text-destructive"}>{driverName || t("unassigned")}</span>
+                  <span className="mx-2 opacity-40">·</span>
+                  <span className="uppercase tracking-wider">{t("coordinator")}:</span>{" "}
+                  <span className={s.coordinator ? "text-foreground font-medium normal-case tracking-normal" : "not-italic font-bold normal-case tracking-normal text-destructive"}>{coordName || t("unassigned")}</span>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </li>

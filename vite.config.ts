@@ -21,6 +21,14 @@ try {
   // ignore
 }
 
+// Generate all Kruh Življenja icons & favicons from master LOGO-kruh.webp
+try {
+  const { generateIcons } = await import("./scripts/generate-icons.mjs");
+  await generateIcons();
+} catch (e) {
+  // ignore
+}
+
 export default defineConfig({
   nitro: {
     preset: "vercel",
@@ -29,6 +37,9 @@ export default defineConfig({
     server: { entry: "server" },
   },
   vite: {
+    server: {
+      port: 5173,
+    },
     optimizeDeps: {
       include: [
         "@radix-ui/react-checkbox",
