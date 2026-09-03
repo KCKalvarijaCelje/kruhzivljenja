@@ -12,22 +12,32 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
         .order("start_year", { ascending: false })
         .limit(20);
 
-      const yearsList = yrs ?? [];
+      let yearsList = yrs ?? [];
+
+      if (yearsList.length === 0) {
+        const startYear = 2026;
+        const label = `${startYear}/${startYear + 1}`;
+        const { data: createdYear } = await (supabaseAdmin as any)
+          .from("ministry_years")
+          .insert({ start_year: startYear, end_year: startYear + 1, label, active: true })
+          .select("id,label,start_year,end_year,active")
+          .maybeSingle();
+        if (createdYear) {
+          yearsList = [createdYear];
+        }
+      }
+
       let selectedYear = yearsList.find((y: any) => y.id === data.yearId);
       if (!selectedYear && yearsList.length > 0) {
         selectedYear = yearsList.find((y: any) => y.start_year === 2026) || yearsList[0];
       }
 
-      if (!selectedYear) {
-        return {
-          success: true,
-          years: [],
-          selectedYear: null,
-          dates: [],
-          people: [],
-          locations: [],
-          households: [],
-        };
+      // Automatically link any orphan schedule_dates (where ministry_year_id is null)
+      if (selectedYear) {
+        await (supabaseAdmin as any)
+          .from("schedule_dates")
+          .update({ ministry_year_id: selectedYear.id })
+          .is("ministry_year_id", null);
       }
 
       // 2. Fetch dates, stops, recipients, and lookups for this year
@@ -37,11 +47,16 @@ export const serverGetPlannerData = createServerFn({ method: "POST" })
         { data: locations },
         { data: households }
       ] = await Promise.all([
-        (supabaseAdmin as any)
-          .from("schedule_dates")
-          .select("id,date,status,notes,ministry_year_id")
-          .eq("ministry_year_id", selectedYear.id)
-          .order("date", { ascending: true }),
+        selectedYear
+          ? (supabaseAdmin as any)
+              .from("schedule_dates")
+              .select("id,date,status,notes,ministry_year_id")
+              .or(`ministry_year_id.eq.${selectedYear.id},ministry_year_id.is.null`)
+              .order("date", { ascending: true })
+          : (supabaseAdmin as any)
+              .from("schedule_dates")
+              .select("id,date,status,notes,ministry_year_id")
+              .order("date", { ascending: true }),
         (supabaseAdmin as any)
           .from("people")
           .select("id,profile_id,full_name,email,phone,active")

@@ -171,13 +171,27 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         }
       }
 
+      let finalYears = yrs ?? [];
+      if (finalYears.length === 0) {
+        const startYear = 2026;
+        const label = `${startYear}/${startYear + 1}`;
+        const { data: createdYear } = await (supabaseAdmin as any)
+          .from("ministry_years")
+          .insert({ start_year: startYear, end_year: startYear + 1, label, active: true, is_current: true })
+          .select("id,label,start_year,end_year,active,is_current")
+          .maybeSingle();
+        if (createdYear) {
+          finalYears = [createdYear];
+        }
+      }
+
       return {
         success: true,
         profiles: finalProfiles,
         people: ppl ?? [],
         peopleRoles: pplRoles ?? [],
         userRoles: ur ?? [],
-        years: yrs ?? [],
+        years: finalYears,
         locations: locs ?? [],
         rules: rls ?? [],
         ruleStops: ruleStops ?? [],
