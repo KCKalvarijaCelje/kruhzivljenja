@@ -153,7 +153,8 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
         { data: peopleRoles },
         { data: households },
         { data: pickups },
-        { data: profilesRaw }
+        { data: profilesRaw },
+        { data: userRoles }
       ] = await Promise.all([
         (supabaseAdmin as any)
           .from("people")
