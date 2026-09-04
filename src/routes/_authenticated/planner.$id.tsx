@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useParams, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { sendDriverNotification } from "@/lib/driver-emails.functions";
+import { getViberMessageForStop } from "@/lib/email-admin.functions";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
@@ -13,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeft, ChevronLeft, ChevronRight, Trash2, Plus, Loader2, MapPin, Repeat } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Trash2, Plus, Loader2, MapPin, Repeat, Smartphone, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import { StopMessages } from "@/components/stop-messages";
 import { LocationLogo } from "@/components/location-logo";
@@ -202,9 +203,50 @@ function DateDetail() {
   // Intercept driver/coordinator changes on stops linked to a recurring template:
   // ask whether to apply only here, to future dates too, or also update the template.
   const notifyDriver = useServerFn(sendDriverNotification);
+  const getViber = useServerFn(getViberMessageForStop);
+  const [viberModal, setViberModal] = useState<{
+    open: boolean;
+    text: string;
+    viberUrl: string;
+    driverName: string;
+    driverPhone: string | null;
+    copied: boolean;
+  } | null>(null);
+
+  const handleOpenViber = async (stopId: string) => {
+    try {
+      const res = await getViber({ data: { stopId } });
+      setViberModal({
+        open: true,
+        text: res.text,
+        viberUrl: res.viberUrl,
+        driverName: res.driverName,
+        driverPhone: res.driverPhone,
+        copied: false,
+      });
+    } catch (err: any) {
+      toast.error(err?.message || "Napaka pri pripravi Viber sporočila");
+    }
+  };
+
+  const copyViberText = () => {
+    if (!viberModal?.text) return;
+    navigator.clipboard.writeText(viberModal.text);
+    setViberModal({ ...viberModal, copied: true });
+    toast.success("Viber sporočilo kopirano v odložišče!");
+    setTimeout(() => {
+      setViberModal((prev) => (prev ? { ...prev, copied: false } : null));
+    }, 3000);
+  };
+
   const fireNotify = async (stopId: string, type: "assignment" | "change", personId: string | null) => {
     if (!personId) return;
-    try { await notifyDriver({ data: { stopIds: [stopId], type } }); } catch (e) { console.error(e); }
+    try {
+      const res = await notifyDriver({ data: { stopIds: [stopId], type } });
+      console.log("Auto driver notification sent:", res);
+    } catch (e) {
+      console.error("Auto driver notification failed:", e);
+    }
   };
 
   const handlePersonChange = (stop: Stop, field: "driver" | "coordinator", personId: string | null) => {
@@ -364,11 +406,25 @@ function DateDetail() {
                     <Badge variant="outline" className="text-xs">{t("oneOffEntry")}</Badge>
                   )}
                 </span>
-                {isAdmin && (
-                  <Button size="icon" variant="ghost" onClick={() => removeStop(stop.id)} title={t("removeStop")}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {stop.driver_id && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs text-purple-700 border-purple-200 hover:bg-purple-50 dark:text-purple-300 dark:border-purple-800"
+                      onClick={() => handleOpenViber(stop.id)}
+                      title="Pripravi Viber sporočilo za voznika"
+                    >
+                      <Smartphone className="h-3.5 w-3.5 mr-1 text-purple-600" />
+                      Viber
+                    </Button>
+                  )}
+                  {isAdmin && (
+                    <Button size="icon" variant="ghost" onClick={() => removeStop(stop.id)} title={t("removeStop")}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -561,6 +617,51 @@ function DateDetail() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setScopePrompt(null)}>{t("cancel")}</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Viber Modal */}
+      <Dialog open={!!viberModal?.open} onOpenChange={(o) => !o && setViberModal(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-900 dark:text-purple-300">
+              <Smartphone className="h-5 w-5 text-purple-600" /> Viber obvestilo za voznika
+            </DialogTitle>
+          </DialogHeader>
+          {viberModal && (
+            <div className="space-y-4 text-sm">
+              <div className="text-xs text-muted-foreground">
+                Sporočilo lahko z enim klikom kopiraš ali odpreš neposredno v Viber aplikaciji.
+              </div>
+              <div className="rounded-lg border bg-purple-50/50 dark:bg-purple-950/20 border-purple-200 dark:border-purple-800 p-3.5">
+                <pre className="whitespace-pre-wrap text-xs font-sans leading-relaxed text-foreground">
+                  {viberModal.text}
+                </pre>
+              </div>
+              {viberModal.driverPhone && (
+                <div className="text-xs text-muted-foreground">
+                  Telefonska številka voznika: <span className="font-semibold text-foreground">{viberModal.driverPhone}</span>
+                </div>
+              )}
+              <div className="flex flex-col gap-2 pt-2">
+                <Button
+                  onClick={copyViberText}
+                  className="w-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-2"
+                >
+                  {viberModal.copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {viberModal.copied ? "Kopirano v odložišče!" : "Kopiraj za Viber"}
+                </Button>
+                <a
+                  href={viberModal.viberUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full inline-flex items-center justify-center py-2 px-4 rounded-md text-xs font-medium border border-purple-300 bg-white hover:bg-purple-50 text-purple-900 dark:bg-zinc-900 dark:text-purple-300 dark:border-purple-800 transition-colors"
+                >
+                  Odpri Viber aplikacijo
+                </a>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -1,3 +1,9 @@
 {
-  "buildCommand": "vite build"
+  "buildCommand": "vite build",
+  "crons": [
+    {
+      "path": "/api/public/hooks/driver-reminders",
+      "schedule": "0 7 * * *"
+    }
+  ]
 }

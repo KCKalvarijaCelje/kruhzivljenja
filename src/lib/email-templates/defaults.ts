@@ -48,16 +48,32 @@ export const TEMPLATE_DEFAULTS: Record<string, Record<TemplateLang, TemplateDefa
     sl: {
       subject: 'Opomnik: jutri si na vrsti — {{date}}',
       body: `Pozdravljen/a {{driver_name}},\n\nprijazno te opominjamo, da si jutri dodeljen/a za prevzem hrane:\n\nDatum: {{date}}\nLokacija: {{location}}\n{{#coordinator}}Razdeljevalec/ka: {{coordinator}}{{/coordinator}}\n\nHvala in lep dan!`,
-      footer: 'Kruh življenja',
+      footer: 'Lep pozdrav,\nKruh življenja',
       placeholders: ['driver_name', 'date', 'location', 'coordinator'],
       description: '24-hour reminder before a scheduled pickup.',
     },
     en: {
       subject: "Reminder: you're on the schedule tomorrow — {{date}}",
       body: `Hello {{driver_name}},\n\nfriendly reminder that you are scheduled tomorrow for a food pickup:\n\nDate: {{date}}\nLocation: {{location}}\n{{#coordinator}}Distributor: {{coordinator}}{{/coordinator}}\n\nThank you and have a great day!`,
-      footer: 'Kruh življenja',
+      footer: 'Best regards,\nKruh življenja',
       placeholders: ['driver_name', 'date', 'location', 'coordinator'],
       description: '24-hour reminder before a scheduled pickup.',
+    },
+  },
+  driver_reminder_today: {
+    sl: {
+      subject: 'Opomnik: danes je prevzem hrane — {{date}}',
+      body: `Pozdravljen/a {{driver_name}},\n\nopominjamo te, da imaš DANES prevzem hrane:\n\nDatum: {{date}}\nLokacija: {{location}}\n{{#coordinator}}Razdeljevalec/ka: {{coordinator}}{{/coordinator}}\n\nHvala za tvoje služenje in lep dan!`,
+      footer: 'Lep pozdrav,\nKruh življenja',
+      placeholders: ['driver_name', 'date', 'location', 'coordinator'],
+      description: 'Same-day morning reminder for scheduled pickup.',
+    },
+    en: {
+      subject: 'Reminder: today is your pickup — {{date}}',
+      body: `Hello {{driver_name}},\n\nreminder that you have a food pickup TODAY:\n\nDate: {{date}}\nLocation: {{location}}\n{{#coordinator}}Distributor: {{coordinator}}{{/coordinator}}\n\nThank you for serving and have a blessed day!`,
+      footer: 'Best regards,\nKruh življenja',
+      placeholders: ['driver_name', 'date', 'location', 'coordinator'],
+      description: 'Same-day morning reminder for scheduled pickup.',
     },
   },
   test_email: {

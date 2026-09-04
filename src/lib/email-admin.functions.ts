@@ -5,10 +5,13 @@ import * as React from 'react'
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware'
 import {
   enqueueDriverNotificationForStop,
+  sendDriverNotificationForStop,
   type DriverNotificationType,
 } from './driver-emails.functions'
 import { template as driverTemplate } from './email-templates/driver-notification'
 import { formatAppDate, formatAppTime, formatAppDateTime } from './tz'
+import { sendResendEmail } from './resend'
+import { TEMPLATE_DEFAULTS, type TemplateLang } from './email-templates/defaults'
 
 
 const SITE_NAME = 'kruhzivljenja'
@@ -182,7 +185,42 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
       }
     })
 
-    // Summary across recent window (last 30 days)
+    // Also include test and direct emails from email_send_log
+    const { data: directLogs } = await admin
+      .from('email_send_log')
+      .select('id, message_id, template_name, recipient_email, status, error_message, created_at, provider_message_id, provider_response')
+      .order('created_at', { ascending: false })
+      .limit(limit)
+
+    const testRows = (directLogs ?? [])
+      .filter((dl: any) => dl.message_id && !ids.includes(dl.message_id))
+      .map((dl: any) => ({
+        id: dl.id,
+        notification_type: dl.template_name ? dl.template_name.replace('driver-', '') : 'test',
+        recipient_email: dl.recipient_email,
+        driver_name: dl.recipient_email,
+        location_name: 'Test pošiljatelja',
+        scheduled_date: 'Admin test',
+        created_at: dl.created_at,
+        sent_at: dl.created_at,
+        message_id: dl.message_id,
+        enqueue_status: dl.status,
+        delivery_status: dl.status,
+        delivery_error: dl.error_message,
+        enqueue_error: null,
+        provider_message_id: dl.provider_message_id,
+        final_status: dl.status,
+      }))
+
+    let allRows = [...merged, ...testRows]
+    if (data.type) {
+      allRows = allRows.filter((r) => r.notification_type === data.type)
+    }
+    if (data.status) {
+      allRows = allRows.filter((r) => r.final_status === data.status)
+    }
+    allRows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    allRows = allRows.slice(0, limit)
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
     const { data: summaryRows } = await admin
       .from('driver_notification_log')
@@ -254,7 +292,7 @@ export const getEmailAdminData = createServerFn({ method: 'POST' })
     const { data: cron, error: cronErr } = await supabase.rpc('admin_get_cron_status')
 
     return {
-      rows: merged,
+      rows: allRows,
       summary,
       senderDomainOk,
       cron: cronErr ? { jobs: [], runs: [], error: cronErr.message } : cron,
@@ -294,7 +332,7 @@ export const triggerDriverNotification = createServerFn({ method: 'POST' })
     const results: Array<{ stopId: string; status: string; reason?: string }> = []
     for (const sid of stopIds) {
       try {
-        const r = await enqueueDriverNotificationForStop(sid, data.type)
+        const r = await enqueueDriverNotificationForStop(sid, data.type, { force: true })
         results.push({ stopId: sid, ...r })
       } catch (e) {
         results.push({
@@ -334,14 +372,25 @@ export const previewDriverEmail = createServerFn({ method: 'POST' })
         ? 'driver_assignment'
         : data.type === 'change'
           ? 'driver_change'
-          : 'driver_reminder'
-    const { data: tpl } = await admin
+          : data.type === 'reminder_today'
+            ? 'driver_reminder_today'
+            : 'driver_reminder'
+
+    let tpl: { subject: string; body: string; footer: string | null } | null = null
+    const { data: dbTpl } = await admin
       .from('email_templates')
       .select('subject, body, footer')
       .eq('template_key', key)
       .eq('language', 'sl')
       .maybeSingle()
-    if (!tpl) throw new Error('template not found for ' + key)
+
+    if (dbTpl) {
+      tpl = dbTpl
+    } else if (TEMPLATE_DEFAULTS[key]?.sl) {
+      tpl = TEMPLATE_DEFAULTS[key].sl
+    } else {
+      tpl = TEMPLATE_DEFAULTS['driver_reminder'].sl
+    }
 
     const { data: brand } = await admin
       .from('email_brand_settings')
@@ -392,19 +441,69 @@ export const previewDriverEmail = createServerFn({ method: 'POST' })
 // ---------------------------------------------------------------------------
 export const sendTestEmailToSelf = createServerFn({ method: 'POST' })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { supabase, userId } = context
+  .inputValidator((input?: { email?: string }) => input ?? {})
+  .handler(async ({ context, data }) => {
+    const { supabase, userId, claims } = context as any
     await assertAdmin(supabase, userId)
     const admin = getAdmin()
 
+    let recipientEmail: string | null = data?.email?.trim() || null
+    let fullName: string | null = null
+
+    // 1. Try JWT claims
+    if (!recipientEmail && claims?.email) {
+      recipientEmail = claims.email
+    }
+
+    // 2. Try profiles table
     const { data: prof } = await admin
       .from('profiles')
       .select('email, full_name')
       .eq('id', userId)
       .maybeSingle()
-    if (!prof?.email) throw new Error('no email on profile')
 
-    const recipientEmail = prof.email
+    if (prof?.email && !recipientEmail) {
+      recipientEmail = prof.email
+    }
+    if (prof?.full_name) {
+      fullName = prof.full_name
+    }
+
+    // 3. Try Supabase auth.users directly via admin client
+    if (!recipientEmail) {
+      try {
+        const { data: authUser } = await admin.auth.admin.getUserById(userId)
+        if (authUser?.user?.email) {
+          recipientEmail = authUser.user.email
+        }
+        if (!fullName && authUser?.user?.user_metadata?.full_name) {
+          fullName = authUser.user.user_metadata.full_name
+        }
+      } catch (authErr) {
+        console.warn('Could not fetch auth user:', authErr)
+      }
+    }
+
+    // 4. Try linked people table
+    if (!recipientEmail) {
+      const { data: person } = await admin
+        .from('people')
+        .select('email, full_name')
+        .eq('profile_id', userId)
+        .maybeSingle()
+      if (person?.email) recipientEmail = person.email
+      if (person?.full_name && !fullName) fullName = person.full_name
+    }
+
+    if (!recipientEmail) {
+      throw new Error('Ni bilo mogoče najti e-poštnega naslova uporabnika (no email found on profile or auth account)')
+    }
+
+    // Backfill profiles table if email was missing
+    if (!prof?.email && recipientEmail) {
+      await admin.from('profiles').update({ email: recipientEmail }).eq('id', userId)
+    }
+
     const normalizedEmail = recipientEmail.toLowerCase()
 
     // Look up or mint an unsubscribe token — the provider rejects
@@ -453,7 +552,7 @@ export const sendTestEmailToSelf = createServerFn({ method: 'POST' })
 
     const now = new Date()
     const vars: Record<string, string | undefined> = {
-      person_name: prof.full_name ?? recipientEmail,
+      person_name: fullName ?? prof?.full_name ?? recipientEmail,
       date: formatAppDate(now),
       time: formatAppTime(now),
       app_name: brand?.app_name ?? 'KRUH ŽIVLJENJA',
@@ -494,62 +593,39 @@ export const sendTestEmailToSelf = createServerFn({ method: 'POST' })
     )
     const messageId = crypto.randomUUID()
 
-    await admin.from('email_send_log').insert({
-      message_id: messageId,
-      template_name: 'driver-test',
-      recipient_email: recipientEmail,
-      status: 'pending',
-    })
-
-    const apiKey = process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || (import.meta as any).env?.VITE_RESEND_API_KEY
-    if (apiKey) {
-      try {
-        const resendRes = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            from: `Kruh Življenja <kruh@kalvarija.si>`,
-            to: [recipientEmail],
-            subject,
-            html,
-            text,
-          }),
-        })
-        const resData = await resendRes.json()
-        if (resendRes.ok) {
-          await admin.from('email_send_log').update({
-            status: 'sent',
-            provider_message_id: resData.id,
-          }).eq('message_id', messageId)
-          return { ok: true, recipient: recipientEmail, message_id: messageId }
-        }
-      } catch (rErr) {
-        console.warn('Resend direct test dispatch notice:', rErr)
-      }
-    }
-
-    const { error } = await admin.rpc('enqueue_email', {
-      queue_name: 'transactional_emails',
-      payload: {
-        message_id: messageId,
-        to: recipientEmail,
-        from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
-        sender_domain: SENDER_DOMAIN,
-        subject,
-        html,
-        text,
-        purpose: 'transactional',
-        label: 'driver-test',
-        idempotency_key: `driver-test-${userId}-${Date.now()}`,
-        unsubscribe_token: unsubscribeToken,
-        queued_at: new Date().toISOString(),
+    const resendRes = await sendResendEmail({
+      to: recipientEmail,
+      from: 'Kruh Življenja <kruhzivljenja@kalvarija.si>',
+      subject,
+      html,
+      text,
+      headers: {
+        'List-Unsubscribe': `<https://kruhzivljenja.kalvarija.si/email/unsubscribe?token=${unsubscribeToken}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       },
     })
-    if (error && !apiKey) throw new Error(error.message)
-    return { ok: true, recipient: recipientEmail, message_id: messageId }
+
+    if (resendRes.success) {
+      await admin.from('email_send_log').insert({
+        message_id: messageId,
+        template_name: 'driver-test',
+        recipient_email: recipientEmail,
+        status: 'sent',
+        provider_message_id: resendRes.id ?? null,
+        provider_response: resendRes,
+      })
+      return { ok: true, recipient: recipientEmail, message_id: messageId, provider_message_id: resendRes.id }
+    } else {
+      await admin.from('email_send_log').insert({
+        message_id: messageId,
+        template_name: 'driver-test',
+        recipient_email: recipientEmail,
+        status: 'failed',
+        error_message: resendRes.error,
+        provider_response: resendRes,
+      })
+      throw new Error(resendRes.error || 'Resend dispatch failed')
+    }
   })
 
 // Poll latest send-log status for a given message_id. Used by the test-email
@@ -619,9 +695,14 @@ export const listUpcomingAssignedStops = createServerFn({ method: 'GET' })
 // ---------------------------------------------------------------------------
 // Admin template CRUD + brand settings + sample preview
 // ---------------------------------------------------------------------------
-import { TEMPLATE_DEFAULTS, type TemplateLang } from './email-templates/defaults'
 
-const EDITABLE_KEYS = ['driver_assignment', 'driver_change', 'driver_reminder', 'test_email'] as const
+const EDITABLE_KEYS = [
+  'driver_assignment',
+  'driver_change',
+  'driver_reminder',
+  'driver_reminder_today',
+  'test_email',
+] as const
 type EditableKey = (typeof EDITABLE_KEYS)[number]
 const LANGS: TemplateLang[] = ['sl', 'en']
 
@@ -877,4 +958,137 @@ export const previewTemplateWithSample = createServerFn({ method: 'POST' })
       }),
     )
     return { subject, body, footer, html }
+  })
+
+// ---------------------------------------------------------------------------
+// Run daily automated reminders immediately on-demand (Tomorrow + Today)
+// ---------------------------------------------------------------------------
+export const runDailyRemindersNow = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context
+    await assertAdmin(supabase, userId)
+    const admin = getAdmin()
+
+    const now = new Date()
+    const todayStr = now.toISOString().slice(0, 10)
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = tomorrow.toISOString().slice(0, 10)
+
+    // 1. Tomorrow stops: 24h reminder
+    const { data: tomorrowDates } = await admin
+      .from('schedule_dates')
+      .select('id, date, schedule_stops(id, driver_id)')
+      .eq('date', tomorrowStr)
+
+    // 2. Today stops: same-day reminder
+    const { data: todayDates } = await admin
+      .from('schedule_dates')
+      .select('id, date, schedule_stops(id, driver_id)')
+      .eq('date', todayStr)
+
+    const results: Array<{ stopId: string; type: string; status: string; reason?: string; messageId?: string }> = []
+
+    for (const d of tomorrowDates ?? []) {
+      for (const s of (d as any).schedule_stops ?? []) {
+        if (s.driver_id) {
+          try {
+            const r = await sendDriverNotificationForStop(s.id, 'reminder')
+            results.push({ stopId: s.id, type: 'reminder (24h prej)', ...r })
+          } catch (err: any) {
+            results.push({
+              stopId: s.id,
+              type: 'reminder (24h prej)',
+              status: 'failed',
+              reason: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+      }
+    }
+
+    for (const d of todayDates ?? []) {
+      for (const s of (d as any).schedule_stops ?? []) {
+        if (s.driver_id) {
+          try {
+            const r = await sendDriverNotificationForStop(s.id, 'reminder_today')
+            results.push({ stopId: s.id, type: 'reminder (danes)', ...r })
+          } catch (err: any) {
+            results.push({
+              stopId: s.id,
+              type: 'reminder (danes)',
+              status: 'failed',
+              reason: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+      }
+    }
+
+    return {
+      today: todayStr,
+      tomorrow: tomorrowStr,
+      totalEvaluated: results.length,
+      sent: results.filter((r) => r.status === 'sent').length,
+      skipped: results.filter((r) => r.status === 'skipped').length,
+      failed: results.filter((r) => r.status === 'failed').length,
+      results,
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// Generate formatted Viber message for a stop
+// ---------------------------------------------------------------------------
+export const getViberMessageForStop = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { stopId: string }) => input)
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context
+    await assertAdmin(supabase, userId)
+    const admin = getAdmin()
+
+    const { data: stop } = await admin
+      .from('schedule_stops')
+      .select(
+        'id, schedule_dates(date), locations(name), driver:people!schedule_stops_driver_id_fkey(full_name,phone), coordinator:people!schedule_stops_coordinator_id_fkey(full_name,phone)',
+      )
+      .eq('id', data.stopId)
+      .maybeSingle()
+
+    if (!stop) throw new Error('Stop not found')
+    const s = stop as any
+
+    const dateFormatted = s.schedule_dates?.date ? formatDateSL(s.schedule_dates.date) : '—'
+    const locationName = s.locations?.name ?? '—'
+    const driverName = s.driver?.full_name ?? '—'
+    const driverPhone = s.driver?.phone ?? null
+    const coordName = s.coordinator?.full_name ?? null
+    const coordPhone = s.coordinator?.phone ?? null
+
+    const { count: recipientCount } = await admin
+      .from('date_recipients')
+      .select('id', { count: 'exact', head: true })
+      .eq('stop_id', data.stopId)
+
+    let text = `🥖 *KRUH ŽIVLJENJA — Obvestilo za prevzem hrane*\n\n`
+    text += `📅 *Datum:* ${dateFormatted}\n`
+    text += `📍 *Lokacija:* ${locationName}\n`
+    text += `👤 *Voznik/Prevzemnik:* ${driverName}${driverPhone ? ` (${driverPhone})` : ''}\n`
+    if (coordName) {
+      text += `🤝 *Koordinator:* ${coordName}${coordPhone ? ` (${coordPhone})` : ''}\n`
+    }
+    if (recipientCount && recipientCount > 0) {
+      text += `📦 *Št. prejemnikov / družin:* ${recipientCount}\n`
+    }
+    text += `\nHvala za tvoje služenje in pomoč! Bog te blagoslovi. 🙏`
+
+    return {
+      text,
+      viberUrl: `viber://forward?text=${encodeURIComponent(text)}`,
+      driverPhone,
+      driverName,
+      locationName,
+      dateFormatted,
+    }
   })

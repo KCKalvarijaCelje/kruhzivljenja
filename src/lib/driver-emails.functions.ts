@@ -5,14 +5,13 @@ import { createClient } from '@supabase/supabase-js'
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware'
 import { template as driverTemplate } from './email-templates/driver-notification'
 import { formatAppDate } from './tz'
+import { sendResendEmail } from './resend'
+import { TEMPLATE_DEFAULTS } from './email-templates/defaults'
 
+const SITE_NAME = 'Kruh Življenja'
+const FROM_EMAIL = 'Kruh Življenja <kruhzivljenja@kalvarija.si>'
 
-
-const SITE_NAME = 'kruhzivljenja'
-const SENDER_DOMAIN = 'notify.kruhzivljenja.kalvarija.si'
-const FROM_DOMAIN = 'kruhzivljenja.kalvarija.si'
-
-export type DriverNotificationType = 'assignment' | 'change' | 'reminder'
+export type DriverNotificationType = 'assignment' | 'change' | 'reminder' | 'reminder_today'
 
 type StopRow = {
   id: string
@@ -37,22 +36,29 @@ function formatDateSL(dateStr: string): string {
   return formatAppDate(dateStr)
 }
 
-
 function getAdmin() {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl =
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    import.meta.env?.VITE_SUPABASE_URL
+  const supabaseServiceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY
   if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Server configuration error')
+    throw new Error('Server configuration error: Supabase service key missing')
   }
   return createClient(supabaseUrl, supabaseServiceKey)
 }
 
-// Shared core: enqueue one driver notification for one stop.
-// Returns a status string for logging by the caller.
-export async function enqueueDriverNotificationForStop(
+/**
+ * Dispatches one driver notification for one stop directly via Resend.
+ * Records the result immediately into driver_notification_log and email_send_log.
+ */
+export async function sendDriverNotificationForStop(
   stopId: string,
   type: DriverNotificationType,
-): Promise<{ status: 'sent' | 'skipped'; reason?: string }> {
+  options?: { force?: boolean },
+): Promise<{ status: 'sent' | 'skipped' | 'failed'; reason?: string; messageId?: string }> {
   const admin = getAdmin()
 
   const { data: stop, error: stopErr } = await admin
@@ -74,16 +80,27 @@ export async function enqueueDriverNotificationForStop(
       ? 'driver_assignment'
       : type === 'change'
         ? 'driver_change'
-        : 'driver_reminder'
+        : type === 'reminder_today'
+          ? 'driver_reminder_today'
+          : 'driver_reminder'
 
-  const { data: tpl, error: tplErr } = await admin
+  // Attempt to load custom template from DB, fall back to built-in defaults
+  let tpl: { subject: string; body: string; footer: string | null } | null = null
+  const { data: dbTpl } = await admin
     .from('email_templates')
     .select('subject, body, footer')
     .eq('template_key', key)
     .eq('language', 'sl')
     .maybeSingle()
 
-  if (tplErr || !tpl) return { status: 'skipped', reason: 'template_missing' }
+  if (dbTpl) {
+    tpl = dbTpl
+  } else if (TEMPLATE_DEFAULTS[key]?.sl) {
+    tpl = TEMPLATE_DEFAULTS[key].sl
+  } else {
+    // Fallback to driver_reminder default if driver_reminder_today is not yet in DB
+    tpl = TEMPLATE_DEFAULTS['driver_reminder'].sl
+  }
 
   const { data: brand } = await admin
     .from('email_brand_settings')
@@ -99,7 +116,7 @@ export async function enqueueDriverNotificationForStop(
     coordinator: s.coordinator?.full_name,
     coordinator_name: s.coordinator?.full_name,
     person_name: s.driver.full_name,
-    app_name: brand?.app_name ?? 'KRUH ŽIVLJENJA',
+    app_name: brand?.app_name ?? SITE_NAME,
   }
 
   const subject = substitute(tpl.subject, vars)
@@ -107,22 +124,26 @@ export async function enqueueDriverNotificationForStop(
   const footer = tpl.footer ? substitute(tpl.footer, vars) : null
   const heading = subject
 
-  // Idempotency: don't re-send same (stop, driver, type) within 24h for assignment/reminder
-  if (type !== 'change') {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  // Idempotency: don't re-send same notification type to the same driver for this stop
+  if (type !== 'change' && !options?.force) {
+    const hours = type === 'reminder_today' ? 12 : 24
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
     const { data: existing } = await admin
       .from('driver_notification_log')
       .select('id')
       .eq('schedule_stop_id', stopId)
-      .eq('driver_person_id', s.driver_id)
-      .eq('notification_type', type)
+      .eq('notification_type', type === 'reminder_today' ? 'reminder' : type)
+      .eq('status', 'sent')
       .gte('created_at', since)
       .limit(1)
       .maybeSingle()
-    if (existing) return { status: 'skipped', reason: 'duplicate' }
+
+    if (existing) {
+      return { status: 'skipped', reason: 'duplicate' }
+    }
   }
 
-  const recipientEmail = s.driver.email
+  const recipientEmail = s.driver.email.trim()
   const normalizedEmail = recipientEmail.toLowerCase()
 
   // Suppression check
@@ -133,10 +154,11 @@ export async function enqueueDriverNotificationForStop(
     .maybeSingle()
 
   if (suppressed) {
+    const dbNotifType = type === 'reminder_today' ? 'reminder' : type
     await admin.from('driver_notification_log').insert({
       schedule_stop_id: stopId,
       driver_person_id: s.driver_id,
-      notification_type: type,
+      notification_type: dbNotifType,
       recipient_email: recipientEmail,
       status: 'suppressed',
     })
@@ -180,10 +202,10 @@ export async function enqueueDriverNotificationForStop(
     footer,
     preview: subject,
     brand: {
-      appName: brand?.app_name ?? 'KRUH ŽIVLJENJA',
+      appName: brand?.app_name ?? SITE_NAME,
       logoUrl: brand?.logo_url ?? null,
       headerImageUrl: brand?.header_image_url ?? null,
-      primaryColor: brand?.primary_color ?? null,
+      primaryColor: brand?.primary_color ?? '#a82020',
       footerText: brand?.footer_text ?? null,
     },
   })
@@ -192,59 +214,61 @@ export async function enqueueDriverNotificationForStop(
 
   const messageId = crypto.randomUUID()
 
-  // Log to global email_send_log
+  // Dispatch directly via Resend
+  const resendResult = await sendResendEmail({
+    to: recipientEmail,
+    from: FROM_EMAIL,
+    subject,
+    html,
+    text,
+    headers: {
+      'List-Unsubscribe': `<https://kruhzivljenja.kalvarija.si/email/unsubscribe?token=${unsubscribeToken}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  })
+
+  const sendStatus = resendResult.success ? 'sent' : 'failed'
+  const dbNotifType = type === 'reminder_today' ? 'reminder' : type
+
+  // Log to email_send_log
   await admin.from('email_send_log').insert({
     message_id: messageId,
     template_name: `driver-${type}`,
     recipient_email: recipientEmail,
-    status: 'pending',
+    status: sendStatus,
+    provider_message_id: resendResult.id ?? null,
+    provider_response: resendResult,
+    error_message: resendResult.error ?? null,
   })
 
-  const { error: enqueueErr } = await admin.rpc('enqueue_email', {
-    queue_name: 'transactional_emails',
-    payload: {
-      message_id: messageId,
-      to: recipientEmail,
-      from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
-      sender_domain: SENDER_DOMAIN,
-      subject,
-      html,
-      text,
-      purpose: 'transactional',
-      label: `driver-${type}`,
-      idempotency_key: `driver-${type}-${stopId}-${s.driver_id}-${Date.now()}`,
-      unsubscribe_token: unsubscribeToken,
-      queued_at: new Date().toISOString(),
-    },
-  })
-
-  if (enqueueErr) {
-    await admin.from('driver_notification_log').insert({
-      schedule_stop_id: stopId,
-      driver_person_id: s.driver_id,
-      notification_type: type,
-      recipient_email: recipientEmail,
-      status: 'failed',
-      error_message: enqueueErr.message,
-      message_id: messageId,
-    })
-    return { status: 'skipped', reason: 'enqueue_failed' }
-  }
-
+  // Log to driver_notification_log
   await admin.from('driver_notification_log').insert({
     schedule_stop_id: stopId,
     driver_person_id: s.driver_id,
-    notification_type: type,
+    notification_type: dbNotifType,
     recipient_email: recipientEmail,
-    // Enqueue success ≠ delivery. Use 'queued' here; the dispatcher will
-    // append 'sent' (handed to provider) to email_send_log, which the admin
-    // dashboard correlates by message_id.
-    status: 'queued',
+    status: sendStatus,
     message_id: messageId,
+    error_message: resendResult.error ?? null,
+    sent_at: resendResult.success ? new Date().toISOString() : null,
   })
 
-  return { status: 'sent' }
+  if (!resendResult.success) {
+    return {
+      status: 'failed',
+      reason: resendResult.error,
+      messageId,
+    }
+  }
+
+  return {
+    status: 'sent',
+    messageId,
+  }
 }
+
+// Backwards-compatible alias for existing imports
+export const enqueueDriverNotificationForStop = sendDriverNotificationForStop
 
 export const sendDriverNotification = createServerFn({ method: 'POST' })
   .middleware([requireSupabaseAuth])
@@ -252,16 +276,16 @@ export const sendDriverNotification = createServerFn({ method: 'POST' })
     (input: { stopIds: string[]; type: DriverNotificationType }) => input,
   )
   .handler(async ({ data }) => {
-    const results: Array<{ stopId: string; status: string; reason?: string }> =
+    const results: Array<{ stopId: string; status: string; reason?: string; messageId?: string }> =
       []
     for (const stopId of data.stopIds) {
       try {
-        const r = await enqueueDriverNotificationForStop(stopId, data.type)
+        const r = await sendDriverNotificationForStop(stopId, data.type)
         results.push({ stopId, ...r })
       } catch (e) {
         results.push({
           stopId,
-          status: 'skipped',
+          status: 'failed',
           reason: e instanceof Error ? e.message : 'unknown',
         })
       }
