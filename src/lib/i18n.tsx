@@ -245,6 +245,35 @@ const dict = {
   searchUsersPlaceholder: { sl: "Išči po imenu, e-pošti ali telefonu…", en: "Search by name, email or phone…" },
   recipientStatusUpdated: { sl: "Status prejemnika posodobljen", en: "Recipient status updated" },
 
+  // Recurring & Templates
+  recurringScheduleTitle: { sl: "Ponavljajoči tedenski urnik & predloge", en: "Recurring weekly schedule & templates" },
+  recurringScheduleDesc: {
+    sl: "Določite, katere dni v tednu se izvajajo prevzemi, katere postaje/lokacije se obiščejo in katera gospodinjstva prejmejo pomoč.",
+    en: "Define which weekdays food pickups occur, which stops/locations are visited, and which recipient households receive assistance.",
+  },
+  addWeekdayRule: { sl: "Dodaj nov dan v tednu za prevzem:", en: "Add new weekday for pickup:" },
+  noRecurringRules: {
+    sl: "Ni dodanih ponavljajočih pravil. Zgoraj izberite dan in kliknite \"+ Dodaj pravilo\".",
+    en: "No recurring rules added. Select a day above and click \"+ Add rule\".",
+  },
+  seedDefaultRules: { sl: "Nastavi privzeti urnik (Pon & Čet)", en: "Set default schedule (Mon & Thu)" },
+  manageUsersDesc: {
+    sl: "Pregled in dodeljevanje vlog (Voznik, Razdeljevalec, Administrator, Prejemnik) za služenje pri Kruhu Življenja.",
+    en: "Overview and assignment of roles (Driver, Distributor, Administrator, Recipient) for Kruh Življenja service.",
+  },
+  peopleSubtitle: {
+    sl: "Združen pregled vseh prostovoljcev, voznikov, razdeljevalcev in prejemnikov.",
+    en: "Unified overview of all volunteers, drivers, distributors, and recipients.",
+  },
+  ministryYearCardTitle: { sl: "Generiranje ministrskega leta", en: "Ministry Year Generation" },
+  ministryYearCardDesc: {
+    sl: "Ustvari ali posodobi vse termine in postaje v koledarju za izbrano leto na podlagi ponavljajočih pravil.",
+    en: "Create or refresh all dates and stops in the calendar for the selected year based on recurring rules.",
+  },
+  generateMinistryYearBtn: { sl: "Generiraj koledar za leto", en: "Generate calendar for year" },
+  datesGeneratedCount: { sl: "generiranih terminov", en: "dates generated" },
+  notGeneratedYet: { sl: "Ni še generirano za to leto", en: "Not yet generated for this year" },
+
   // Misc
   loading: { sl: "Nalaganje…", en: "Loading…" },
   error: { sl: "Napaka", en: "Error" },

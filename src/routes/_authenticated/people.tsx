@@ -283,7 +283,7 @@ function PeoplePage() {
         <div>
           <h1 className="text-3xl font-bold text-slate-900">{t("people")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Združen pregled vseh prostovoljcev, voznikov, razdeljevalcev in prejemnikov.
+            {t("peopleSubtitle")}
           </p>
         </div>
         {isAdmin && (

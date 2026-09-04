@@ -40,6 +40,7 @@ import {
   serverGetAdminData,
   serverAddRecurringRule,
   serverRemoveRecurringRule,
+  serverSeedDefaultRules,
   serverAddLocation,
   serverRemoveLocation,
   serverGenerateMinistryYear,
@@ -82,6 +83,9 @@ function AdminPage() {
   const [newYear, setNewYear] = useState<number>(currentMinistryStartYear());
   const [newLoc, setNewLoc] = useState("");
   const [newRule, setNewRule] = useState<{ weekday: number; frequency: string }>({ weekday: 1, frequency: "weekly" });
+  const [dateCount, setDateCount] = useState(0);
+  const [generatingYear, setGeneratingYear] = useState(false);
+  const [seedingRules, setSeedingRules] = useState(false);
 
   const [hhPick, setHhPick] = useState<Record<string, string>>({});
   const [locPick, setLocPick] = useState<Record<string, string>>({});
@@ -168,6 +172,7 @@ function AdminPage() {
 
       setUsers(enriched);
       setYears(res.years ?? []);
+      setDateCount((res as any).dateCount ?? 0);
       setLocations(res.locations ?? []);
       setRules(res.rules ?? []);
       setRuleStops(res.ruleStops ?? []);
@@ -179,6 +184,40 @@ function AdminPage() {
       toast.error(err?.message ?? "Napaka pri nalaganju podatkov");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGenerateMinistryYear = async (year: number) => {
+    setGeneratingYear(true);
+    try {
+      const res = await serverGenerateMinistryYear({ data: { startYear: year } });
+      if (res.success) {
+        toast.success(`${t("ministryYearGenerated")} (${res.dateCount} ${t("datesGeneratedCount")})`);
+        loadAll();
+      } else {
+        toast.error(res.error || "Napaka pri generiranju leta");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Napaka pri generiranju");
+    } finally {
+      setGeneratingYear(false);
+    }
+  };
+
+  const handleSeedDefaultRules = async () => {
+    setSeedingRules(true);
+    try {
+      const res = await serverSeedDefaultRules({});
+      if (res.success) {
+        toast.success("Privzeta pravila in termini so bili uspešno ustvarjeni!");
+        loadAll();
+      } else {
+        toast.error(res.error || "Napaka pri nastavitvi privzetih pravil");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Napaka");
+    } finally {
+      setSeedingRules(false);
     }
   };
 
@@ -678,21 +717,74 @@ function AdminPage() {
         </CardContent>
       </Card>
 
+      {/* 2. MINISTRY YEAR GENERATION */}
+      <Card className="border-slate-200/80 shadow-xs">
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">{t("ministryYearCardTitle")}</CardTitle>
+            </div>
+            <Badge variant="outline" className="text-sm font-semibold">
+              {ministryLabel(years.length > 0 && years[0].start_year ? years[0].start_year : currentMinistryStartYear())}
+            </Badge>
+          </div>
+          <CardDescription>
+            {t("ministryYearCardDesc")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-between flex-wrap gap-4 pt-0">
+          <div className="text-sm">
+            {dateCount > 0 ? (
+              <span className="text-emerald-700 font-medium">
+                ✓ {dateCount} {t("datesGeneratedCount")} ({ministryLabel(years.length > 0 && years[0].start_year ? years[0].start_year : currentMinistryStartYear())})
+              </span>
+            ) : (
+              <span className="text-amber-700 font-medium">
+                ⚠ {t("notGeneratedYet")}
+              </span>
+            )}
+          </div>
+          <Button
+            onClick={() => handleGenerateMinistryYear(years.length > 0 && years[0].start_year ? years[0].start_year : currentMinistryStartYear())}
+            disabled={generatingYear}
+            className="gap-2 bg-primary text-primary-foreground"
+          >
+            {generatingYear ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {t("generateMinistryYearBtn")} {ministryLabel(years.length > 0 && years[0].start_year ? years[0].start_year : currentMinistryStartYear())}
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* 3. RECURRING WEEKLY SCHEDULE & TEMPLATES */}
       <Card className="border-slate-200/80 shadow-xs">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <Repeat className="h-5 w-5 text-primary" />
-            <CardTitle className="text-lg">Ponavljajoči tedenski urnik & predloge</CardTitle>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Repeat className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">{t("recurringScheduleTitle")}</CardTitle>
+            </div>
+            {rules.length === 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSeedDefaultRules}
+                disabled={seedingRules}
+                className="gap-1.5 text-primary border-primary/40 hover:bg-primary/5"
+              >
+                {seedingRules ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                {t("seedDefaultRules")}
+              </Button>
+            )}
           </div>
           <CardDescription>
-            Določite, katere dni v tednu se izvajajo prevzemi, katere postaje/lokacije se obiščejo in katera gospodinjstva prejmejo pomoč.
+            {t("recurringScheduleDesc")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Add new weekday rule */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
-            <span className="text-xs font-semibold text-slate-700 block">Dodaj nov dan v tednu za prevzem:</span>
+            <span className="text-xs font-semibold text-slate-700 block">{t("addWeekdayRule")}</span>
             <div className="grid sm:grid-cols-3 gap-2">
               <Select
                 value={String(newRule.weekday)}
@@ -731,9 +823,18 @@ function AdminPage() {
           {/* Active Rules List */}
           <div className="space-y-4">
             {rules.length === 0 ? (
-              <p className="text-center py-8 text-sm text-muted-foreground border-2 border-dashed rounded-xl">
-                Ni dodanih ponavljajočih pravil. Zgoraj izberite dan in kliknite &quot;+ Dodaj pravilo&quot;.
-              </p>
+              <div className="text-center py-8 px-4 text-sm text-muted-foreground border-2 border-dashed rounded-xl space-y-3">
+                <p>{t("noRecurringRules")}</p>
+                <Button
+                  onClick={handleSeedDefaultRules}
+                  disabled={seedingRules}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  {seedingRules ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {t("seedDefaultRules")}
+                </Button>
+              </div>
             ) : (
               rules.map((r) => {
                 const stops = ruleStops.filter((s) => s.rule_id === r.id);
@@ -1005,7 +1106,7 @@ function AdminPage() {
             </div>
           </div>
           <CardDescription>
-            Pregled in dodeljevanje vlog (Voznik, Razdeljevalec, Administrator, Prejemnik) za služenje pri Kruhu Življenja.
+            {t("manageUsersDesc")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

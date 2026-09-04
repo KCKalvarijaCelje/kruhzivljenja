@@ -70,7 +70,8 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         { data: rls },
         { data: ruleStops },
         { data: recTemplates },
-        { data: households }
+        { data: households },
+        datesCountRes
       ] = await Promise.all([
         (supabaseAdmin as any)
           .from("profiles")
@@ -86,6 +87,7 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         (supabaseAdmin as any).from("recurring_schedule_rule_stops").select("id,rule_id,location_id,sort_order,default_driver_count,locations(name)").order("sort_order"),
         (supabaseAdmin as any).from("recurring_recipient_templates").select("id,rule_id,household_id,recipient_households(name,size)"),
         (supabaseAdmin as any).from("recipient_households").select("id,name,size,person_id,active").order("name").limit(200),
+        (supabaseAdmin as any).from("schedule_dates").select("*", { count: "exact", head: true }),
       ]);
 
       const finalProfiles = [...(profs ?? [])];
@@ -190,6 +192,7 @@ export const serverGetAdminData = createServerFn({ method: "GET" }).handler(
         ruleStops: ruleStops ?? [],
         templates: recTemplates ?? [],
         households: households ?? [],
+        dateCount: (datesCountRes as any)?.count ?? 0,
       };
     } catch (err: any) {
       console.error("serverGetAdminData error:", err);
@@ -260,6 +263,108 @@ export const serverRemoveRecurringRule = createServerFn({ method: "POST" })
       if (error) return { success: false, error: error.message };
       return { success: true };
     } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+export const serverSeedDefaultRules = createServerFn({ method: "POST" })
+  .handler(async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      // 1. Fetch locations
+      const { data: locs } = await (supabaseAdmin as any)
+        .from("locations")
+        .select("id,name")
+        .order("name");
+
+      let locList = locs ?? [];
+      const kfc = locList.find((l: any) => l.name?.toLowerCase().includes("kfc"))?.id;
+      const sparSb = locList.find((l: any) => l.name?.toLowerCase().includes("slovenska bistrica"))?.id;
+      const sparLasko = locList.find((l: any) => l.name?.toLowerCase().includes("laško") || l.name?.toLowerCase().includes("lasko"))?.id;
+
+      // 2. Fetch households
+      const { data: hhs } = await (supabaseAdmin as any)
+        .from("recipient_households")
+        .select("id")
+        .eq("active", true);
+      const hhIds = (hhs ?? []).map((h: any) => h.id);
+
+      // 3. Create Monday rule (weekday: 1, weekly)
+      let { data: monRule } = await (supabaseAdmin as any)
+        .from("recurring_schedule_rules")
+        .select("id")
+        .eq("weekday", 1)
+        .eq("frequency", "weekly")
+        .maybeSingle();
+
+      if (!monRule) {
+        const { data: createdMon } = await (supabaseAdmin as any)
+          .from("recurring_schedule_rules")
+          .insert({ weekday: 1, frequency: "weekly", active: true })
+          .select("id")
+          .single();
+        monRule = createdMon;
+      }
+
+      if (monRule) {
+        if (sparSb) {
+          await (supabaseAdmin as any)
+            .from("recurring_schedule_rule_stops")
+            .upsert({ rule_id: monRule.id, location_id: sparSb, sort_order: 1, default_driver_count: 1 }, { onConflict: "rule_id,location_id" });
+        }
+        for (const hid of hhIds) {
+          await (supabaseAdmin as any)
+            .from("recurring_recipient_templates")
+            .upsert({ rule_id: monRule.id, household_id: hid }, { onConflict: "rule_id,household_id" });
+        }
+      }
+
+      // 4. Create Thursday rule (weekday: 4, weekly)
+      let { data: thuRule } = await (supabaseAdmin as any)
+        .from("recurring_schedule_rules")
+        .select("id")
+        .eq("weekday", 4)
+        .eq("frequency", "weekly")
+        .maybeSingle();
+
+      if (!thuRule) {
+        const { data: createdThu } = await (supabaseAdmin as any)
+          .from("recurring_schedule_rules")
+          .insert({ weekday: 4, frequency: "weekly", active: true })
+          .select("id")
+          .single();
+        thuRule = createdThu;
+      }
+
+      if (thuRule) {
+        let order = 1;
+        if (sparSb) {
+          await (supabaseAdmin as any)
+            .from("recurring_schedule_rule_stops")
+            .upsert({ rule_id: thuRule.id, location_id: sparSb, sort_order: order++, default_driver_count: 1 }, { onConflict: "rule_id,location_id" });
+        }
+        if (sparLasko) {
+          await (supabaseAdmin as any)
+            .from("recurring_schedule_rule_stops")
+            .upsert({ rule_id: thuRule.id, location_id: sparLasko, sort_order: order++, default_driver_count: 1 }, { onConflict: "rule_id,location_id" });
+        }
+        if (kfc) {
+          await (supabaseAdmin as any)
+            .from("recurring_schedule_rule_stops")
+            .upsert({ rule_id: thuRule.id, location_id: kfc, sort_order: order++, default_driver_count: 1 }, { onConflict: "rule_id,location_id" });
+        }
+        for (const hid of hhIds) {
+          await (supabaseAdmin as any)
+            .from("recurring_recipient_templates")
+            .upsert({ rule_id: thuRule.id, household_id: hid }, { onConflict: "rule_id,household_id" });
+        }
+      }
+
+      // Auto generate dates for 2026/2027
+      await serverGenerateMinistryYear({ data: { startYear: 2026 } });
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("serverSeedDefaultRules error:", err);
       return { success: false, error: err.message };
     }
   });

@@ -169,8 +169,9 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
         (supabaseAdmin as any).from("driver_pickup_households").select("person_id,household_id").limit(300),
         (supabaseAdmin as any)
           .from("profiles")
-          .select("id, email, full_name, phone, notes, active, approval_status")
+          .select("id, auth_user_id, email, full_name, phone, notes, active, approval_status, is_driver, kruh_role, role")
           .limit(300),
+        (supabaseAdmin as any).from("user_roles").select("user_id,role"),
       ]);
 
       const profiles = await syncUnlinkedPeopleToProfiles(people ?? [], profilesRaw ?? [], peopleRoles ?? []);
@@ -199,53 +200,121 @@ export const serverGetPeopleData = createServerFn({ method: "GET" }).handler(
           .map((pr: any) => [pr.email.toLowerCase().trim(), pr])
       );
 
-      const enriched = (people ?? [])
-        .map((p: any) => {
-          const hhList = householdsByPerson[p.id] ?? [];
-          const primaryHh = hhList[0] ?? null;
-          const profile =
-            (p.profile_id && profMap.get(String(p.profile_id))) ||
-            (p.email && profEmailMap.get(p.email.toLowerCase().trim())) ||
-            null;
+      const urList = userRoles ?? [];
 
-          const roles = (rolesByPerson[p.id] ?? []).map((role) => ({ role }));
-          const resolvedAddress =
-            p.address ||
-            primaryHh?.address ||
-            profile?.address ||
-            profile?.street ||
-            profile?.home_address ||
-            null;
+      const enriched = (people ?? []).map((p: any) => {
+        const hhList = householdsByPerson[p.id] ?? [];
+        const primaryHh = hhList[0] ?? null;
+        const profile =
+          (p.profile_id && profMap.get(String(p.profile_id))) ||
+          (p.email && profEmailMap.get(p.email.toLowerCase().trim())) ||
+          null;
 
-          return {
-            ...p,
-            address: resolvedAddress,
-            people_roles: roles,
-            recipient_households: hhList,
-            pickupHhIds: pickupsByPerson[p.id] ?? [],
-          };
-        });
+        const personRoles = rolesByPerson[p.id] ?? [];
+        const profRoles: string[] = [];
+        if (profile?.is_driver) profRoles.push("driver");
+        if (profile?.kruh_role && ["driver", "coordinator", "admin"].includes(profile.kruh_role)) {
+          profRoles.push(profile.kruh_role);
+        }
+        if (profile?.role === "admin" || profile?.role === "superadmin") {
+          profRoles.push("admin");
+        }
+        const userRoleMatches = urList
+          .filter(
+            (u: any) =>
+              (p.profile_id && u.user_id === p.profile_id) ||
+              (profile?.id && u.user_id === profile.id) ||
+              (profile?.auth_user_id && u.user_id === profile.auth_user_id)
+          )
+          .map((u: any) => u.role);
+
+        if (userRoleMatches.includes("admin")) profRoles.push("admin");
+        if (userRoleMatches.includes("driver")) profRoles.push("driver");
+        if (userRoleMatches.includes("coordinator")) profRoles.push("coordinator");
+
+        const combinedRoles = Array.from(new Set([...personRoles, ...profRoles])).map((role) => ({ role }));
+
+        // Check if matched to a recipient household by name if not already linked by id
+        let finalHhList = hhList;
+        if (finalHhList.length === 0 && p.full_name) {
+          const matchedByName = (households ?? []).filter(
+            (h: any) => h.active && h.name && h.name.toLowerCase().trim() === p.full_name.toLowerCase().trim()
+          );
+          if (matchedByName.length > 0) finalHhList = matchedByName;
+        }
+
+        const resolvedAddress =
+          p.address ||
+          primaryHh?.address ||
+          profile?.address ||
+          profile?.street ||
+          profile?.home_address ||
+          null;
+
+        return {
+          ...p,
+          address: resolvedAddress,
+          people_roles: combinedRoles,
+          recipient_households: finalHhList,
+          pickupHhIds: pickupsByPerson[p.id] ?? [],
+        };
+      });
 
       const linkedProfIds = new Set((people ?? []).map((p: any) => String(p.profile_id)).filter(Boolean));
       const linkedEmails = new Set((people ?? []).map((p: any) => p.email?.toLowerCase().trim()).filter(Boolean));
 
       const unlinkedPeople = (profiles ?? [])
-        .filter((pr: any) => !linkedProfIds.has(String(pr.id)) && (!pr.email || !linkedEmails.has(pr.email.toLowerCase().trim())))
-        .map((pr: any) => ({
-          id: `virtual-${pr.id}`,
-          profile_id: pr.id,
-          full_name: pr.full_name || pr.email || "Neznano",
-          first_name: pr.first_name || pr.full_name?.split(" ")[0] || "",
-          last_name: pr.last_name || pr.full_name?.split(" ").slice(1).join(" ") || "",
-          email: pr.email,
-          phone: pr.phone,
-          notes: pr.notes,
-          active: pr.active !== false,
-          address: pr.address || null,
-          people_roles: [],
-          recipient_households: [],
-          pickupHhIds: [],
-        }));
+        .filter(
+          (pr: any) =>
+            !linkedProfIds.has(String(pr.id)) &&
+            (!pr.email || !linkedEmails.has(pr.email.toLowerCase().trim()))
+        )
+        .map((pr: any) => {
+          const profRoles: string[] = [];
+          if (pr.is_driver) profRoles.push("driver");
+          if (pr.kruh_role && ["driver", "coordinator", "admin"].includes(pr.kruh_role)) {
+            profRoles.push(pr.kruh_role);
+          }
+          if (pr.role === "admin" || pr.role === "superadmin") {
+            profRoles.push("admin");
+          }
+          const userRoleMatches = urList
+            .filter(
+              (u: any) =>
+                u.user_id === pr.id || (pr.auth_user_id && u.user_id === pr.auth_user_id)
+            )
+            .map((u: any) => u.role);
+
+          if (userRoleMatches.includes("admin")) profRoles.push("admin");
+          if (userRoleMatches.includes("driver")) profRoles.push("driver");
+          if (userRoleMatches.includes("coordinator")) profRoles.push("coordinator");
+
+          const combinedRoles = Array.from(new Set(profRoles)).map((role) => ({ role }));
+
+          const matchedByName = (households ?? []).filter(
+            (h: any) =>
+              h.active &&
+              pr.full_name &&
+              h.name &&
+              h.name.toLowerCase().trim() === pr.full_name.toLowerCase().trim()
+          );
+
+          return {
+            id: `virtual-${pr.id}`,
+            profile_id: pr.id,
+            full_name: pr.full_name || pr.email || "Neznano",
+            first_name: pr.first_name || pr.full_name?.split(" ")[0] || "",
+            last_name: pr.last_name || pr.full_name?.split(" ").slice(1).join(" ") || "",
+            email: pr.email,
+            phone: pr.phone,
+            notes: pr.notes,
+            active: pr.active !== false,
+            address: pr.address || null,
+            people_roles: combinedRoles,
+            recipient_households: matchedByName,
+            pickupHhIds: [],
+          };
+        });
 
       const allPeople = [...enriched, ...unlinkedPeople];
 
