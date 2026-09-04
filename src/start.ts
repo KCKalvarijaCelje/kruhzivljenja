@@ -11,11 +11,17 @@ const errorMiddleware = createMiddleware().server(async ({ next, request }) => {
 
   try {
     return await next();
-  } catch (error) {
-    if (error != null && typeof error === "object" && "statusCode" in error) {
+  } catch (error: any) {
+    if (
+      error != null &&
+      (error.isRedirect ||
+        error.statusCode ||
+        error.status ||
+        (typeof error === "object" && ("to" in error || "headers" in error)))
+    ) {
       throw error;
     }
-    console.error(error);
+    console.error("Uncaught server request error:", error);
     return new Response(renderErrorPage(), {
       status: 500,
       headers: { "content-type": "text/html; charset=utf-8" },

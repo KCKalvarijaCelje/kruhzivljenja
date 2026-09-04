@@ -1,1 +1,0 @@
-import{e as s,r as i,i as o,k as n}from"./index-Bq3uZgA1.js";function u(e){const t=s();return i.useCallback(async(...a)=>{try{const r=await e(...a);if(o(r))throw r;return r}catch(r){if(o(r))return r.options._fromLocation=t.stores.location.get(),t.navigate(t.resolveRedirect(r).options);throw r}},[t,e])}const p=n({type:"function"});export{p as r,u};

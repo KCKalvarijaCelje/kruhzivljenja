@@ -1,1 +1,0 @@
-function e(n=new Date){const r=n.getFullYear();return Math.max(r,2026)}function o(n){return`${n}/${n+1}`}function a(n){const r=[];for(let t=8;t<=11;t++)r.push({year:n,month:t});for(let t=0;t<=7;t++)r.push({year:n+1,month:t});return r}export{a,e as c,o as m};
